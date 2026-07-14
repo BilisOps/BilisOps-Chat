@@ -9,8 +9,8 @@
     "build": "vite build",
     "server": "node server.js",
     "start": "npm run build && node server.js",
-    "cf:dev": "npm run build && wrangler dev",
-    "cf:deploy": "npm run build && wrangler deploy"
+    "pages:dev": "npm run build && wrangler pages dev",
+    "pages:deploy": "npm run build && wrangler pages deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -1,6 +1,6 @@
-# Copy this file to  .dev.vars  and fill in real values for local `wrangler dev`.
+# Copy this file to  .dev.vars  and fill in real values for local `wrangler pages dev`.
 # .dev.vars is git-ignored. In production, set these in
-# Worker → Settings → Variables & Secrets instead.
+# Cloudflare Pages → Settings → Environment variables instead.
 
 # --- Supabase (required) ---
 SUPABASE_URL=https://YOUR-PROJECT.supabase.co

@@ -1,20 +1,21 @@
-// BilisOps Chat — API + static-asset server on a Cloudflare Worker.
+// BilisOps Chat — API on Cloudflare Pages Functions (Workers runtime).
 // Same /api/* contract as the old Express server.js, but data lives in Supabase
 // Postgres (reached over HTTPS with the service-role key) and password hashing
 // uses Web Crypto (PBKDF2) instead of Node scrypt.
 //
-// Bindings expected (set in the Worker → Settings → Variables & Secrets, and in
-// .dev.vars for local `wrangler dev`):
+// Bindings expected (set in Cloudflare Pages → Settings → Environment variables,
+// and in .dev.vars for `wrangler pages dev`):
 //   SUPABASE_URL          e.g. https://xxxx.supabase.co
 //   SUPABASE_SERVICE_KEY  the service_role key (SECRET — server only)
 //   ANTHROPIC_API_KEY     optional — enables Claude drafts (template fallback without it)
 //   SHOPEE_* / LAZADA_* / TIKTOK_* / META_*   optional — only affect readiness flags
-//   ASSETS                static-assets binding (serves the built React app in dist/)
 //
-// Webhooks + OAuth callbacks are intentionally not included in this build.
+// The built React app (dist/) is served by Pages automatically; this Function
+// only handles /api/*. Webhooks + OAuth callbacks are not included in this build.
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { handle } from 'hono/cloudflare-pages';
 import { createClient } from '@supabase/supabase-js';
 
 const app = new Hono();
@@ -504,11 +505,7 @@ app.post('/api/ai/draft', async (c) => {
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
 
-// Everything else → static assets (built React app), with SPA fallback handled
-// by the assets binding's not_found_handling = "single-page-application".
-app.all('*', (c) => c.env.ASSETS.fetch(c.req.raw));
-
 // Surface unexpected errors (incl. Supabase write failures) as clean JSON.
 app.onError((err, c) => c.json({ error: 'server_error', detail: String(err?.message || err) }, 500));
 
-export default app;
+export const onRequest = handle(app);
