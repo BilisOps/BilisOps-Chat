@@ -354,10 +354,11 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
   const sb = sbFrom(c);
   const live = meta.envVars.every((v) => Boolean(c.env[v]));
 
+  const code = q.code || q.auth_code || q.authorization_code;
   let shopName, shopId, tokens = null;
   if (live && !q.demo) {
     let res = null;
-    if (key === 'tiktok' && q.code) res = await exchangeTikTok(c.env, q.code).catch(() => null);
+    if (key === 'tiktok' && code) res = await exchangeTikTok(c.env, code).catch(() => null);
     // Shopee / Lazada / Meta token exchange slot in here as each goes live.
     if (res) { shopName = res.shopName; shopId = res.shopId; tokens = res.tokens; }
     else { shopName = `${UI_NAME[key]} Shop`; shopId = String(q.shop_id || q.shop_cipher || randHex(6)); }
