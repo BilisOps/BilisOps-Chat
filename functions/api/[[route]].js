@@ -383,6 +383,187 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
   return c.redirect(`/?connected=${key}&shop=${encodeURIComponent(shopName)}`, 302);
 });
 
+// ---------- Platform webhooks: normalize every marketplace into ONE model ----------
+// Each platform names & shapes things differently. These translate the native
+// push payload into the canonical message { externalShopId, buyerExternalId,
+// buyerName, text, sentAt } or order { externalShopId, orderRef, status, amount, at }
+// that the unified inbox and dashboards consume.
+const NORMALIZE = {
+  // Shopee — buyer=buyer_user_id, chat=conversation_id, order=order_sn
+  shopee: {
+    message(body) {
+      const c = body && body.data && body.data.content;
+      if (!c || body.data.type !== 'message') return null;
+      const text = c.message_type === 'text' ? (c.content && c.content.text) : `[${c.message_type || 'attachment'}]`;
+      if (!text) return null;
+      return {
+        externalShopId: String(body.shop_id || ''),
+        buyerExternalId: String(c.from_id || ''),
+        buyerName: c.from_user_name || `Buyer ${c.from_id || ''}`.trim(),
+        text,
+        sentAt: c.created_timestamp ? new Date(c.created_timestamp * 1000).toISOString() : new Date().toISOString(),
+      };
+    },
+    order(body) {
+      const d = body && body.data;
+      if (!d || !d.ordersn || d.type === 'message') return null;
+      return {
+        externalShopId: String(body.shop_id || ''),
+        orderRef: String(d.ordersn),
+        status: String(d.status || 'UNKNOWN').toUpperCase(),
+        amount: d.total_amount != null ? Number(d.total_amount) : null,
+        at: d.update_time ? new Date(d.update_time * 1000).toISOString() : new Date().toISOString(),
+      };
+    },
+  },
+  // Lazada — chat unit=SESSION (session_id), content is JSON string, buyer=from_account_type 1
+  lazada: {
+    message(body) {
+      const d = body && body.data;
+      if (!d) return null;
+      if (d.from_account_type && Number(d.from_account_type) !== 1) return null;
+      let text = '';
+      try { text = JSON.parse(d.content || '{}').txt || ''; } catch { text = String(d.content || ''); }
+      if (!text) return null;
+      return {
+        externalShopId: String(body.seller_id || ''),
+        buyerExternalId: String(d.session_id || ''),
+        buyerName: d.sender_nick || 'Lazada Buyer',
+        text,
+        sentAt: d.send_time ? new Date(Number(d.send_time)).toISOString() : new Date().toISOString(),
+      };
+    },
+    order(body) {
+      const d = body && body.data;
+      const ref = d && (d.trade_order_id || d.order_id);
+      if (!ref) return null;
+      return {
+        externalShopId: String(body.seller_id || ''),
+        orderRef: String(ref),
+        status: String(d.order_status || (Array.isArray(d.statuses) ? d.statuses[0] : '') || 'UNKNOWN').toUpperCase(),
+        amount: d.price != null ? Number(d.price) : null,
+        at: d.update_time ? new Date(Number(d.update_time)).toISOString() : new Date().toISOString(),
+      };
+    },
+  },
+  // TikTok Shop — buyer is called "USER" (im_user_id); role must be BUYER
+  tiktok: {
+    message(body) {
+      const d = body && body.data;
+      if (!d || (d.sender && d.sender.role && d.sender.role !== 'BUYER')) return null;
+      const text = (d.content && (d.content.text || d.content.content)) || '';
+      if (!text) return null;
+      return {
+        externalShopId: String(body.shop_id || ''),
+        buyerExternalId: String((d.sender && d.sender.im_user_id) || ''),
+        buyerName: (d.sender && d.sender.nickname) || 'TikTok User',
+        text,
+        sentAt: d.create_time ? new Date(Number(d.create_time) * 1000).toISOString() : new Date().toISOString(),
+      };
+    },
+    order(body) {
+      const d = body && body.data;
+      if (!d || !d.order_id || !String(body.type || '').includes('ORDER')) return null;
+      return {
+        externalShopId: String(body.shop_id || ''),
+        orderRef: String(d.order_id),
+        status: String(d.order_status || 'UNKNOWN').toUpperCase(),
+        amount: d.payment && d.payment.total_amount != null ? Number(d.payment.total_amount) : null,
+        at: d.update_time ? new Date(Number(d.update_time) * 1000).toISOString() : new Date().toISOString(),
+      };
+    },
+  },
+  // Meta (Messenger/Instagram) — page=page_id, buyer=PSID (opaque), message=mid
+  fb: {
+    message(body) {
+      if (body.object !== 'page' && body.object !== 'instagram') return null;
+      const entry = body.entry && body.entry[0];
+      const msg = entry && entry.messaging && entry.messaging[0];
+      if (!msg || !msg.message || !msg.message.text) return null;
+      return {
+        externalShopId: String(entry.id || ''),
+        buyerExternalId: String((msg.sender && msg.sender.id) || ''),
+        buyerName: `User ${String((msg.sender && msg.sender.id) || '').slice(-4)}`,
+        text: msg.message.text,
+        sentAt: msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString(),
+      };
+    },
+  },
+};
+
+// Per-platform signature verification (demo mode accepts unsigned until keys are set).
+async function verifyWebhook(key, env, headers, rawBody, fullUrl) {
+  const has = (vars) => vars.every((v) => Boolean(env[v]));
+  if (key === 'shopee') {
+    if (!has(['SHOPEE_PARTNER_ID', 'SHOPEE_PARTNER_KEY'])) return { ok: true, mode: 'demo' };
+    return { ok: eq(headers.authorization || '', await hmacHex(env.SHOPEE_PARTNER_KEY, `${fullUrl}|${rawBody}`)), mode: 'live' };
+  }
+  if (key === 'lazada') {
+    if (!has(['LAZADA_APP_KEY', 'LAZADA_APP_SECRET'])) return { ok: true, mode: 'demo' };
+    return { ok: eq(headers.authorization || '', await hmacHex(env.LAZADA_APP_SECRET, rawBody)), mode: 'live' };
+  }
+  if (key === 'tiktok') {
+    if (!has(['TIKTOK_APP_KEY', 'TIKTOK_APP_SECRET'])) return { ok: true, mode: 'demo' };
+    return { ok: eq(headers.authorization || '', await hmacHex(env.TIKTOK_APP_SECRET, `${env.TIKTOK_APP_KEY}${rawBody}`)), mode: 'live' };
+  }
+  if (key === 'fb') {
+    if (!has(['META_APP_SECRET'])) return { ok: true, mode: 'demo' };
+    return { ok: eq(headers['x-hub-signature-256'] || '', `sha256=${await hmacHex(env.META_APP_SECRET, rawBody)}`), mode: 'live' };
+  }
+  return { ok: false, mode: 'unknown' };
+}
+
+// Route an incoming webhook to the right connected shop (by platform + shop id),
+// falling back to the first shop of that platform.
+async function findStoreByShop(sb, key, shopId) {
+  if (shopId) {
+    const { data } = await sb.from('stores').select('data').eq('data->>key', key).eq('data->>externalId', String(shopId)).limit(1);
+    if (data && data.length) return data[0].data;
+  }
+  const { data } = await sb.from('stores').select('data').eq('data->>key', key).limit(1);
+  return data && data.length ? data[0].data : null;
+}
+
+// Meta webhook GET verification (hub.challenge handshake).
+app.get('/api/platforms/fb/webhook', (c) => {
+  const verifyToken = c.env.META_VERIFY_TOKEN || 'bilisops';
+  if (c.req.query('hub.mode') === 'subscribe' && c.req.query('hub.verify_token') === verifyToken) {
+    return c.text(c.req.query('hub.challenge') || '');
+  }
+  return c.text('verification failed', 403);
+});
+
+// Native platform webhook → canonical model → unified inbox / dashboards.
+app.post('/api/platforms/:key/webhook', async (c) => {
+  const key = c.req.param('key');
+  const norm = NORMALIZE[key];
+  if (!norm) return c.json({ error: 'unknown platform' }, 404);
+  const rawBody = await c.req.text();
+  const check = await verifyWebhook(key, c.env, {
+    authorization: c.req.header('authorization'),
+    'x-hub-signature-256': c.req.header('x-hub-signature-256'),
+  }, rawBody, c.req.url);
+  if (!check.ok) return c.json({ error: 'invalid signature' }, 401);
+  let body; try { body = JSON.parse(rawBody || '{}'); } catch { body = {}; }
+  const sb = sbFrom(c);
+
+  const msg = norm.message ? norm.message(body) : null;
+  if (msg) {
+    const store = await findStoreByShop(sb, key, msg.externalShopId);
+    if (!store) return c.json({ error: 'no_store', message: `No connected ${key} shop` }, 404);
+    const conv = await deliverBuyerMessage(sb, store, msg.buyerName, msg.text, msg.buyerExternalId);
+    return c.json({ ok: true, kind: 'message', mode: check.mode, conversationId: conv.id });
+  }
+  const evt = norm.order ? norm.order(body) : null;
+  if (evt) {
+    const store = await findStoreByShop(sb, key, evt.externalShopId);
+    if (!store) return c.json({ error: 'no_store' }, 404);
+    const order = await deliverOrderEvent(sb, store, evt);
+    return c.json({ ok: true, kind: 'order', mode: check.mode, orderId: order.id, status: order.status });
+  }
+  return c.json({ ok: true, ignored: 'not a chat or order event' });
+});
+
 // ---------- orders + stats ----------
 app.get('/api/orders', async (c) => {
   const seller = c.get('seller');
