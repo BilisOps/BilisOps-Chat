@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# local JSON dev database (legacy Express server)
+data/db.json
+
+# secrets — never commit
+.dev.vars
+.env
+.env.*
+!.dev.vars.example
+!.env.example
+
+# private business filings (DTI cert-based docs) — keep out of the code repo
+lazada-docs/
+
+# cloudflare / wrangler
+.wrangler/
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log
+*.lnk
