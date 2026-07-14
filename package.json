@@ -11,7 +11,8 @@
     "start": "npm run build && node server.js",
     "pages:dev": "npm run build && wrangler pages dev",
     "pages:deploy": "npm run build && wrangler pages deploy",
-    "keys:apply": "node tools/apply-keys.mjs"
+    "keys:apply": "node tools/apply-keys.mjs",
+    "keys:push": "node tools/apply-keys.mjs --push"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

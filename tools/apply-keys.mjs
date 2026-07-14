@@ -54,17 +54,27 @@ for (const [name, need] of Object.entries(groups)) {
 
 if (push) {
   console.log('\nPushing to Cloudflare Pages (production)…');
+  let ok = 0;
   for (const [k, v] of Object.entries(vars)) {
     try {
       execSync(`npx wrangler pages secret put ${k} --project-name ${PROJECT}`, {
         input: v + '\n', stdio: ['pipe', 'inherit', 'inherit'],
       });
       console.log(`  ✓ set ${k}`);
+      ok++;
     } catch (e) {
       console.error(`  ✗ failed ${k}: ${e.message}`);
     }
   }
-  console.log('\nDone. Redeploy so the Function picks them up:  npm run pages:deploy');
+  if (ok) {
+    console.log('\nRedeploying so the live site picks up the new keys…');
+    try {
+      execSync('npm run pages:deploy', { stdio: 'inherit' });
+      console.log('\n✅ Done. Keys are live in production.');
+    } catch (e) {
+      console.error('\nSecrets set, but the redeploy failed — run "npm run pages:deploy" manually.');
+    }
+  }
 } else {
   console.log('\nLocal .dev.vars updated. For PRODUCTION, either:');
   console.log('  • node tools/apply-keys.mjs --push        (sets them on Cloudflare via wrangler)');
