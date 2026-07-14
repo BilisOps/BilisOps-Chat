@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp, useLocal } from '../state.jsx';
 import { api } from '../api.js';
 import { PagePad, PageTitle, DataTable, StatusPill, FormDialog } from '../components.jsx';
-import { SEAT_LIMITS } from '../data.js';
+import { SEAT_LIMITS, PLATFORM_SERVER_KEYS } from '../data.js';
 
 // ---------- Store Authorization ----------
 export function StoreAuth() {
@@ -11,25 +11,42 @@ export function StoreAuth() {
   const [name, setName] = useState('');
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState(false);
   const [platforms, setPlatforms] = useState([]);
 
   React.useEffect(() => {
     api('/api/platforms').then(setPlatforms).catch(() => {});
   }, []);
 
-  async function authorize() {
+  // Connect flow: ask the backend for the authorize URL, then send the browser there.
+  // The platform (or the demo consent page) redirects back and the store gets created.
+  async function connect() {
+    setBusy(true);
+    const key = PLATFORM_SERVER_KEYS[platform];
+    try {
+      const { url, mode } = await api(`/api/connect/${key}/start`);
+      toast(mode === 'demo' ? `Opening ${platform} authorization…` : `Redirecting to ${platform}…`);
+      logOp(`Started ${platform} store authorization`);
+      window.location.href = url;
+    } catch {
+      toast('Could not start authorization — try again');
+      setBusy(false);
+    }
+  }
+
+  // Manual add (offline / advanced) — create a store without the redirect.
+  async function addManual() {
     if (!name.trim()) { toast('Enter your store name first'); return; }
     setBusy(true);
-    toast(`Redirecting to ${platform} to authorize...`);
     try {
       await api('/api/stores', { method: 'POST', body: { platform, name: name.trim(), externalId: externalId.trim() || undefined } });
       await syncStores();
-      logOp(`Authorized ${platform} store "${name.trim()}"`);
-      toast(`${name.trim()} authorized on ${platform} ✓`);
+      logOp(`Added ${platform} store "${name.trim()}" manually`);
+      toast(`${name.trim()} added on ${platform} ✓`);
       setName('');
       setExternalId('');
     } catch {
-      toast('Authorization failed — try again');
+      toast('Could not add store — try again');
     } finally {
       setBusy(false);
     }
@@ -62,19 +79,29 @@ export function StoreAuth() {
         <select value={platform} onChange={e => setPlatform(e.target.value)}>
           {['Shopee', 'Lazada', 'TikTok', 'Facebook'].map(p => <option key={p}>{p}</option>)}
         </select>
-        <input type="text" placeholder="Store name (e.g. MyStorePH)" value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') authorize(); }} />
-        <input type="text" placeholder="Platform ID (shop_id / seller_id / page_id — optional)" value={externalId}
-          onChange={e => setExternalId(e.target.value)} style={{ width: 280 }} />
-        <button className="btn-sm primary" disabled={busy} onClick={authorize}>+ Authorize Store</button>
+        <button className="btn-sm primary" disabled={busy} onClick={connect}>
+          {busy ? 'Connecting…' : `Connect ${platform} store`}
+        </button>
+        <span className="page-sub" style={{ margin: 0 }}>
+          Connect as many shops as you like — repeat for each shop.
+        </span>
         <div className="spacer" />
-        <button className="btn-sm" onClick={() => toast('Drag-to-sort coming soon')}>Manage sorting</button>
+        <button className="btn-sm" onClick={() => setManual(m => !m)}>{manual ? 'Hide manual' : 'Add manually'}</button>
       </div>
+      {manual && (
+        <div className="toolbar-row">
+          <input type="text" placeholder="Store name (e.g. MyStorePH)" value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addManual(); }} />
+          <input type="text" placeholder="Platform ID (shop_id / seller_id / page_id — optional)" value={externalId}
+            onChange={e => setExternalId(e.target.value)} style={{ width: 280 }} />
+          <button className="btn-sm" disabled={busy} onClick={addManual}>+ Add store</button>
+        </div>
+      )}
       <DataTable
         columns={['Store name', 'Platform', 'Site', 'Authorized at', 'Expires', 'Status', 'Actions']}
         rows={rows}
-        empty='No stores authorized yet. Pick a platform above, enter your store name, and click "Authorize Store".' />
+        empty='No stores connected yet. Pick a platform above and click "Connect store" to authorize through the platform.' />
 
       <h3 style={{ margin: '30px 0 6px' }}>Open API readiness</h3>
       <p className="page-sub">

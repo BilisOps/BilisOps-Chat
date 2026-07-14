@@ -66,6 +66,26 @@ function eq(a, b) {
 const publicSeller = (s) => ({ id: s.id, email: s.email, name: s.name });
 const bearer = (c) => (c.req.header('authorization') || '').replace(/^Bearer\s+/i, '');
 
+// ---------- signed OAuth state (stateless CSRF token tying a flow to a seller) ----------
+async function hmacHex(secret, msg) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const b64url = (s) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlDec = (s) => atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+async function signState(secret, payload) {
+  const body = b64url(JSON.stringify(payload));
+  return `${body}.${await hmacHex(secret, body)}`;
+}
+async function verifyState(secret, state) {
+  const [body, mac] = String(state || '').split('.');
+  if (!body || !mac || (await hmacHex(secret, body)) !== mac) return null;
+  let p; try { p = JSON.parse(b64urlDec(body)); } catch { return null; }
+  if (!p.iat || Date.now() - p.iat > 15 * 60 * 1000) return null; // 15-min validity
+  return p;
+}
+
 // Await a Supabase query and throw on error so writes never fail silently.
 async function w(q) {
   const { data, error } = await q;
@@ -84,8 +104,11 @@ async function sellerFromToken(c, sb) {
 
 // ---------- auth gate for everything except the public auth routes ----------
 const PUBLIC = new Set(['/api/auth/register', '/api/auth/login', '/api/auth/demo']);
+// Platform OAuth callbacks/consent pages and webhooks are reached by the platform
+// (or the seller's browser mid-redirect), so they carry no Bearer token.
+const OPEN_RE = /^\/api\/platforms\/[^/]+\/(oauth|webhook)/;
 app.use('/api/*', async (c, next) => {
-  if (c.req.method === 'OPTIONS' || PUBLIC.has(c.req.path)) return next();
+  if (c.req.method === 'OPTIONS' || PUBLIC.has(c.req.path) || OPEN_RE.test(c.req.path)) return next();
   const sb = sbFrom(c);
   const seller = await sellerFromToken(c, sb);
   if (!seller) return c.json({ error: 'unauthorized' }, 401);
@@ -228,6 +251,136 @@ app.get('/api/platforms', (c) => {
       authorizeUrl: p.authorize(redirect),
     };
   }));
+});
+
+// ---------- Store connection (OAuth "Authorize" flow) ----------
+// A seller clicks Connect → we send them to the platform (or a demo consent page)
+// → the platform redirects back to the callback → we create/refresh a store.
+// A seller can connect ANY number of shops per platform; each authorization with a
+// new shop id adds a new store, re-authorizing the same shop just refreshes it.
+const UI_NAME = { shopee: 'Shopee', lazada: 'Lazada', tiktok: 'TikTok', fb: 'Facebook' };
+
+function liveAuthorizeUrl(key, env, redirect, state) {
+  const r = encodeURIComponent(redirect), s = encodeURIComponent(state);
+  if (key === 'shopee') return `https://partner.shopeemobile.com/api/v2/shop/auth_partner?partner_id=${env.SHOPEE_PARTNER_ID}&redirect=${r}`;
+  if (key === 'lazada') return `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${r}&client_id=${env.LAZADA_APP_KEY}&state=${s}`;
+  if (key === 'tiktok') return `https://services.tiktokshop.com/open/authorize?app_key=${env.TIKTOK_APP_KEY}&state=${s}`;
+  if (key === 'fb') return `https://www.facebook.com/v19.0/dialog/oauth?client_id=${env.META_APP_ID || ''}&redirect_uri=${r}&scope=pages_messaging,pages_manage_metadata,pages_show_list&state=${s}`;
+  return null;
+}
+
+function consentPage(title, inner) {
+  return `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
+    body{font-family:Inter,system-ui,sans-serif;background:#f9fafb;color:#111827;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+    .card{max-width:420px;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.06)}
+    .b{width:38px;height:38px;border-radius:10px;background:#f97316;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+    h2{font-size:18px;margin:16px 0 4px} p{color:#6b7280;font-size:14px;line-height:1.6;margin:0 0 4px}
+    label{font-size:12px;font-weight:600;color:#374151;display:block;margin:14px 0 6px}
+    input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #e5e7eb;border-radius:9px;font-size:14px}
+    .btn{width:100%;margin-top:18px;padding:11px;border:0;border-radius:9px;background:#f97316;color:#fff;font-weight:600;font-size:14px;cursor:pointer}
+    .muted{font-size:12px;color:#9ca3af;margin-top:14px;text-align:center}
+    .pill{display:inline-block;background:#ffedd5;color:#c2410c;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;margin-left:6px;vertical-align:middle}
+  </style></head><body><div class="card">${inner}</div></body></html>`;
+}
+
+// Start the flow: mint signed state, return the URL to send the seller to.
+app.get('/api/connect/:key/start', async (c) => {
+  const seller = c.get('seller');
+  const key = c.req.param('key');
+  const meta = PLATFORM_META.find((p) => p.key === key);
+  if (!meta) return c.json({ error: 'unknown platform' }, 400);
+  const origin = new URL(c.req.url).origin;
+  const redirect = `${origin}/api/platforms/${key}/oauth/callback`;
+  const state = await signState(c.env.SUPABASE_SERVICE_KEY, { sid: seller.id, key, iat: Date.now() });
+  const live = meta.envVars.every((v) => Boolean(c.env[v]));
+  const url = live
+    ? liveAuthorizeUrl(key, c.env, redirect, state)
+    : `${origin}/api/platforms/${key}/oauth/mock?state=${encodeURIComponent(state)}`;
+  return c.json({ url, mode: live ? 'live' : 'demo', platform: UI_NAME[key] || meta.name });
+});
+
+// Demo consent page (stands in for the platform's own login screen until live keys are set).
+app.get('/api/platforms/:key/oauth/mock', (c) => {
+  const key = c.req.param('key');
+  const meta = PLATFORM_META.find((p) => p.key === key);
+  if (!meta) return c.text('Unknown platform', 404);
+  const state = c.req.query('state') || '';
+  const name = UI_NAME[key] || meta.name;
+  const action = `${new URL(c.req.url).origin}/api/platforms/${key}/oauth/callback`;
+  return c.html(consentPage(`Authorize ${name}`, `
+    <div class="b">⚡</div>
+    <h2>Authorize BilisOps Chat<span class="pill">DEMO</span></h2>
+    <p><b>BilisOps Chat</b> is requesting permission to manage buyer messages for your <b>${name}</b> shop.</p>
+    <p>In live mode, ${name} shows its own login &amp; consent screen here.</p>
+    <form method="GET" action="${action}">
+      <input type="hidden" name="state" value="${state}">
+      <input type="hidden" name="demo" value="1">
+      <input type="hidden" name="shop_id" value="demo-${randHex(4)}">
+      <label>Name this shop</label>
+      <input name="shop_name" placeholder="e.g. ${name} Main Store" required autofocus>
+      <button class="btn" type="submit">Authorize &amp; connect</button>
+    </form>
+    <div class="muted">Connecting several ${name} shops? Repeat this for each one.</div>
+  `));
+});
+
+async function exchangeTikTok(env, code) {
+  const url = 'https://auth.tiktok-shops.com/api/v2/token/get'
+    + `?app_key=${encodeURIComponent(env.TIKTOK_APP_KEY)}&app_secret=${encodeURIComponent(env.TIKTOK_APP_SECRET)}`
+    + `&auth_code=${encodeURIComponent(code)}&grant_type=authorized_code`;
+  const d = await fetch(url).then((r) => r.json()).catch(() => null);
+  if (d && d.data && d.data.access_token) {
+    return {
+      shopName: d.data.seller_name || 'TikTok Shop',
+      shopId: String(d.data.open_id || d.data.seller_name || randHex(6)),
+      tokens: { access_token: d.data.access_token, refresh_token: d.data.refresh_token, expiresIn: d.data.access_token_expire_in },
+    };
+  }
+  return null;
+}
+
+// Callback: the platform (or demo page) redirects here. Verify state → create/refresh store.
+app.get('/api/platforms/:key/oauth/callback', async (c) => {
+  const key = c.req.param('key');
+  const meta = PLATFORM_META.find((p) => p.key === key);
+  const fail = (msg) => c.html(consentPage('Authorization failed',
+    `<div class="b">⚡</div><h2>Couldn't connect</h2><p>${msg}</p><p style="margin-top:10px"><a href="/">Return to BilisOps Chat</a></p>`), 400);
+  if (!meta) return fail('Unknown platform.');
+  const q = c.req.query();
+  const payload = await verifyState(c.env.SUPABASE_SERVICE_KEY, q.state);
+  if (!payload || payload.key !== key) return fail('This authorization link expired. Go back and click Connect again.');
+
+  const sellerId = payload.sid;
+  const sb = sbFrom(c);
+  const live = meta.envVars.every((v) => Boolean(c.env[v]));
+
+  let shopName, shopId, tokens = null;
+  if (live && !q.demo) {
+    let res = null;
+    if (key === 'tiktok' && q.code) res = await exchangeTikTok(c.env, q.code).catch(() => null);
+    // Shopee / Lazada / Meta token exchange slot in here as each goes live.
+    if (res) { shopName = res.shopName; shopId = res.shopId; tokens = res.tokens; }
+    else { shopName = `${UI_NAME[key]} Shop`; shopId = String(q.shop_id || q.shop_cipher || randHex(6)); }
+  } else {
+    shopName = String(q.shop_name || `${UI_NAME[key]} Shop`).slice(0, 80);
+    shopId = String(q.shop_id || `demo-${randHex(4)}`);
+  }
+
+  const { data: rows } = await sb.from('stores').select('data').eq('seller_id', sellerId);
+  let store = (rows || []).map((r) => r.data).find((s) => s.key === key && s.externalId === shopId);
+  const now = new Date().toISOString();
+  if (store) {
+    store.name = shopName; store.authorizedAt = now; if (tokens) store.tokens = tokens;
+  } else {
+    const expires = new Date(); expires.setFullYear(expires.getFullYear() + 1);
+    store = {
+      id: id('str'), sellerId, platform: UI_NAME[key] || meta.name, key,
+      name: shopName, site: 'PH', externalId: shopId, storeToken: randHex(16),
+      tokens: tokens || null, authorizedAt: now, expiresAt: expires.toISOString(),
+    };
+  }
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: sellerId, data: store }));
+  return c.redirect(`/?connected=${key}&shop=${encodeURIComponent(shopName)}`, 302);
 });
 
 // ---------- orders + stats ----------

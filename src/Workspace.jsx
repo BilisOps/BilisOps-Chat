@@ -124,7 +124,7 @@ function SetupModal({ onDone }) {
 }
 
 export default function Workspace() {
-  const { user, unread, plan, onLogout, settings } = useApp();
+  const { user, unread, plan, onLogout, settings, toast, syncStores } = useApp();
   const [tabs, setTabs] = useState(['home']);
   const [active, setActive] = useState('home');
   const [flyout, setFlyout] = useState(null); // rail item id
@@ -137,6 +137,19 @@ export default function Workspace() {
     };
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
+  }, []);
+
+  // Returning from a platform "Connect" authorization (?connected=shopee&shop=…)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const key = params.get('connected');
+    if (!key) return;
+    const shop = params.get('shop') ? decodeURIComponent(params.get('shop')) : 'Store';
+    const label = { shopee: 'Shopee', lazada: 'Lazada', tiktok: 'TikTok', fb: 'Facebook' }[key] || key;
+    toast(`${shop} connected on ${label} ✓`);
+    syncStores?.();
+    openPage('storeauth');
+    window.history.replaceState({}, '', window.location.pathname);
   }, []);
 
   function openPage(id) {
