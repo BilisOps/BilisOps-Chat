@@ -1,0 +1,20 @@
+# Copy this file to  .dev.vars  and fill in real values for local `wrangler dev`.
+# .dev.vars is git-ignored. In production, set these in
+# Worker → Settings → Variables & Secrets instead.
+
+# --- Supabase (required) ---
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_KEY=YOUR-SERVICE-ROLE-KEY
+
+# --- Claude AI drafts (optional; template fallback without it) ---
+ANTHROPIC_API_KEY=
+
+# --- Platform keys (optional; only flip the readiness flags for now) ---
+SHOPEE_PARTNER_ID=
+SHOPEE_PARTNER_KEY=
+LAZADA_APP_KEY=
+LAZADA_APP_SECRET=
+TIKTOK_APP_KEY=
+TIKTOK_APP_SECRET=
+META_APP_SECRET=
+META_VERIFY_TOKEN=
