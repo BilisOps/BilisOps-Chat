@@ -264,7 +264,13 @@ function liveAuthorizeUrl(key, env, redirect, state) {
   const r = encodeURIComponent(redirect), s = encodeURIComponent(state);
   if (key === 'shopee') return `https://partner.shopeemobile.com/api/v2/shop/auth_partner?partner_id=${env.SHOPEE_PARTNER_ID}&redirect=${r}`;
   if (key === 'lazada') return `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${r}&client_id=${env.LAZADA_APP_KEY}&state=${s}`;
-  if (key === 'tiktok') return `https://services.tiktokshop.com/open/authorize?app_key=${env.TIKTOK_APP_KEY}&state=${s}`;
+  if (key === 'tiktok') {
+    // TikTok Shop seller authorization uses a SERVICE ID (from Partner Center),
+    // not the app_key. Prefer a full pasted URL, then service_id, then app_key.
+    if (env.TIKTOK_AUTH_URL) return `${env.TIKTOK_AUTH_URL}${env.TIKTOK_AUTH_URL.includes('?') ? '&' : '?'}state=${s}`;
+    if (env.TIKTOK_SERVICE_ID) return `https://services.tiktokshop.com/open/authorize?service_id=${env.TIKTOK_SERVICE_ID}&state=${s}`;
+    return `https://services.tiktokshop.com/open/authorize?app_key=${env.TIKTOK_APP_KEY}&state=${s}`;
+  }
   if (key === 'fb') return `https://www.facebook.com/v19.0/dialog/oauth?client_id=${env.META_APP_ID || ''}&redirect_uri=${r}&scope=pages_messaging,pages_manage_metadata,pages_show_list&state=${s}`;
   return null;
 }
