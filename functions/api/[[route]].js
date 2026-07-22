@@ -966,13 +966,23 @@ app.post('/api/ai/draft', async (c) => {
 
   const fallback = () => c.json({
     draft: templateDraft(lastIn.text), engine: 'template',
-    note: 'Set ANTHROPIC_API_KEY on the server to enable Claude-powered drafts.',
+    note: 'Add DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) on the server to enable real AI replies.',
   });
-  if (!c.env.ANTHROPIC_API_KEY) return fallback();
+  const hasDeepSeek = Boolean(c.env.DEEPSEEK_API_KEY);
+  const hasClaude = Boolean(c.env.ANTHROPIC_API_KEY);
+  if (!hasDeepSeek && !hasClaude) return fallback();
 
   try {
     const { data: kr } = await sb.from('knowledge').select('text').eq('seller_id', seller.id).maybeSingle();
     const knowledge = (kr && kr.text) || '(no knowledge pack yet)';
+    const system = [
+      'You are BilisBot, the customer-service assistant for a Philippine e-commerce seller using BilisOps Chat.',
+      "Draft ONE reply to the buyer's latest message. Match the buyer's language (English, Tagalog, or Taglish).",
+      'Be warm, concise (1-3 sentences), and helpful, like a friendly human seller. An emoji or two is fine.',
+      'Only state facts found in the store knowledge pack below. If the answer is not in it, promise to check and follow up instead of inventing details.',
+      `<store_knowledge_pack>\n${knowledge}\n</store_knowledge_pack>`,
+      'Output ONLY the reply text, nothing else.',
+    ].join('\n');
     const history = conv.messages.slice(-12).map((m) => ({
       role: m.direction === 'in' ? 'user' : 'assistant', content: m.text,
     }));
@@ -980,6 +990,35 @@ app.post('/api/ai/draft', async (c) => {
     if (!history.length || history[history.length - 1].role !== 'user') {
       history.push({ role: 'user', content: lastIn.text });
     }
+
+    // Engine 1: DeepSeek (OpenAI-compatible chat completions)
+    if (hasDeepSeek) {
+      try {
+        const resp = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${c.env.DEEPSEEK_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'deepseek-chat',
+            max_tokens: 512,
+            temperature: 1.1,
+            messages: [{ role: 'system', content: system }, ...history],
+          }),
+        });
+        const raw = await resp.text();
+        let data = null; try { data = JSON.parse(raw); } catch { }
+        const draft = data?.choices?.[0]?.message?.content?.trim();
+        if (draft) return c.json({ draft, engine: 'deepseek' });
+        console.log('deepseek draft failed —', `HTTP ${resp.status}: ${raw.slice(0, 200)}`);
+      } catch (e) {
+        console.log('deepseek draft failed —', String(e && e.message || e));
+      }
+      if (!hasClaude) return fallback();
+    }
+
+    // Engine 2: Claude
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -987,19 +1026,7 @@ app.post('/api/ai/draft', async (c) => {
         'x-api-key': c.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model: 'claude-opus-4-8',
-        max_tokens: 1024,
-        system: [
-          'You are BilisBot, the customer-service assistant for a Philippine e-commerce seller using BilisOps Chat.',
-          "Draft ONE reply to the buyer's latest message. Match the buyer's language (English, Tagalog, or Taglish).",
-          'Be warm, concise (1-3 sentences), and helpful, like a friendly human seller. An emoji or two is fine.',
-          'Only state facts found in the store knowledge pack below. If the answer is not in it, promise to check and follow up instead of inventing details.',
-          `<store_knowledge_pack>\n${knowledge}\n</store_knowledge_pack>`,
-          'Output ONLY the reply text, nothing else.',
-        ].join('\n'),
-        messages: history,
-      }),
+      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 1024, system, messages: history }),
     });
     const data = await resp.json();
     const draft = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();

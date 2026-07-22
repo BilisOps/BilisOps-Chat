@@ -47,6 +47,7 @@ const groups = {
   Lazada: ['LAZADA_APP_KEY', 'LAZADA_APP_SECRET'],
   TikTok: ['TIKTOK_APP_KEY', 'TIKTOK_APP_SECRET'],
   Meta:   ['META_APP_SECRET'],
+  'DeepSeek AI': ['DEEPSEEK_API_KEY'],
 };
 for (const [name, need] of Object.entries(groups)) {
   console.log(`  ${need.every((n) => vars[n]) ? '🟢 live' : '⚪ demo'}  ${name}`);
