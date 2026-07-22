@@ -245,8 +245,9 @@ export function useRangeState(initial = 'Day') {
 // fields: [{ key, label, type: 'text'|'textarea'|'select', placeholder, options,
 //            rows, required, value, hint }]
 export function FormDialog({ title, sub, fields, submitLabel = 'Save', onSubmit, onClose }) {
+  const optValue = o => (o && typeof o === 'object' ? o.value : o);
   const [values, setValues] = useState(() =>
-    Object.fromEntries(fields.map(f => [f.key, f.value ?? (f.type === 'select' ? (f.options?.[0] ?? '') : '')])));
+    Object.fromEntries(fields.map(f => [f.key, f.value ?? (f.type === 'select' ? (optValue(f.options?.[0]) ?? '') : '')])));
   const [errs, setErrs] = useState({});
 
   function set(key, v) {
@@ -281,7 +282,10 @@ export function FormDialog({ title, sub, fields, submitLabel = 'Save', onSubmit,
               />
             ) : f.type === 'select' ? (
               <select value={values[f.key]} onChange={e => set(f.key, e.target.value)}>
-                {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                {(f.options || []).map(o => {
+                  const v = optValue(o);
+                  return <option key={v} value={v}>{o && typeof o === 'object' ? o.label : o}</option>;
+                })}
               </select>
             ) : (
               <input

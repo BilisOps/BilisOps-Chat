@@ -24,7 +24,7 @@ export const RAIL_TOP = [
   { id: 'tickets', icon: 'ti-ticket', title: 'Ticket Center', page: 'tickets' },
   { id: 'ai', icon: 'ti-robot', title: 'AI', menu: [
     { label: 'Data', items: [['ai-monitor', 'AI Chatbot Monitor'], ['ai-reception', 'Auto Reception']] },
-    { label: 'Rules', items: [['ai-hub', 'AI Chatbot'], ['ai-recs', 'Product Recommendations'], ['ai-handover', 'Human Handover Rules'], ['ai-replyrules', 'AI Reply Rules']] },
+    { label: 'Rules', items: [['ai-hub', 'AI Chatbot'], ['ai-products', 'Product Catalog'], ['ai-replyrules', 'AI Reply Rules'], ['ai-recs', 'Product Recommendations'], ['ai-handover', 'Human Handover Rules']] },
   ]},
   { id: 'marketing', icon: 'ti-gift', title: 'Marketing', menu: [
     { label: 'Follow-up', items: [['followup', 'Order Follow-Up']] },

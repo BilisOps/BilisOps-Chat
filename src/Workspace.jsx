@@ -5,7 +5,7 @@ import Home from './pages/Home.jsx';
 import Chats from './pages/Chats.jsx';
 import Tickets from './pages/Tickets.jsx';
 import Plans from './pages/Plans.jsx';
-import { AiHub, AiMonitor, TogglesPage, AiRulesPage, RECEPTION_ITEMS, HANDOVER_ITEMS } from './pages/Ai.jsx';
+import { AiHub, AiMonitor, TogglesPage, AiRulesPage, AiProducts, AiServerRules, RECEPTION_ITEMS, HANDOVER_ITEMS } from './pages/Ai.jsx';
 import { Followup, Broadcast, QuickReply, AutoReply, ReplyReview, Reminders } from './pages/Marketing.jsx';
 import { SalesConv, LossPage, ReviewAnalysis, CsPerf, StorePerf, StoreHealth } from './pages/Analytics.jsx';
 import { StoreAuth, AgentsPage, Sensitive, SystemSettings, OpRecord, Privacy } from './pages/Settings.jsx';
@@ -32,14 +32,8 @@ const PAGES = {
       prompts={['Rule name (e.g. "Out-of-stock alternative"):', 'Trigger / which products (e.g. "sold-out item asked → suggest 3 similar"):']}
       empty='No recommendation rules yet. Example: "when asked about an out-of-stock item, suggest 3 similar in-stock products."' />,
   },
-  'ai-replyrules': {
-    title: 'AI Reply Rules', rail: 'ai',
-    render: (p) => <AiRulesPage {...p}
-      title="AI Reply Rules" sub="Fine-tune which questions the AI may answer on its own."
-      storageKey="aireplyrules" columns={['Rule', 'Behavior', 'Status', 'Actions']}
-      prompts={['Question type (e.g. "Shipping questions"):', 'Behavior (e.g. "auto-answer" or "draft only"):']}
-      empty='No AI reply rules yet. Example: "shipping questions → auto-answer; pricing negotiations → draft only."' />,
-  },
+  'ai-products': { title: 'Product Catalog', rail: 'ai', render: () => <AiProducts /> },
+  'ai-replyrules': { title: 'AI Reply Rules', rail: 'ai', render: () => <AiServerRules /> },
   followup: { title: 'Order Follow-Up', rail: 'marketing', render: () => <Followup /> },
   broadcast: { title: 'Message Broadcast', rail: 'marketing', render: (p) => <Broadcast {...p} /> },
   quickreply: { title: 'Quick Reply', rail: 'marketing', render: () => <QuickReply /> },

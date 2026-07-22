@@ -944,7 +944,83 @@ app.put('/api/knowledge', async (c) => {
   return c.json({ ok: true });
 });
 
-// ---------- AI draft (Claude via REST, template fallback) ----------
+// ---------- AI config: product catalog + seller rules (feeds every draft) ----------
+const clampStr = (s, n) => String(s ?? '').slice(0, n);
+const STOCK_VALUES = new Set(['in', 'low', 'out', 'preorder']);
+
+function sanitizeProducts(list) {
+  if (!Array.isArray(list)) return null;
+  return list.slice(0, 60).map((p) => ({
+    id: clampStr(p.id, 24) || id('prd'),
+    name: clampStr(p.name, 80),
+    price: clampStr(p.price, 60),
+    variants: clampStr(p.variants, 140),
+    stock: STOCK_VALUES.has(p.stock) ? p.stock : 'in',
+    promo: clampStr(p.promo, 140),
+    notes: clampStr(p.notes, 240),
+    active: p.active !== false,
+  })).filter((p) => p.name);
+}
+
+function sanitizeRules(list) {
+  if (!Array.isArray(list)) return null;
+  return list.slice(0, 30).map((r) => ({
+    id: clampStr(r.id, 24) || id('rul'),
+    title: clampStr(r.title, 90),
+    detail: clampStr(r.detail, 500),
+    active: r.active !== false,
+  })).filter((r) => r.title);
+}
+
+app.get('/api/ai/config', (c) => {
+  const seller = c.get('seller');
+  return c.json({ products: seller.aiProducts || [], rules: seller.aiRules || [] });
+});
+
+app.put('/api/ai/config', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  const { data: row } = await sb.from('sellers').select('data').eq('id', seller.id).maybeSingle();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const fresh = row.data;
+  const products = sanitizeProducts(body.products);
+  const rules = sanitizeRules(body.rules);
+  if (products) fresh.aiProducts = products;
+  if (rules) fresh.aiRules = rules;
+  await w(sb.from('sellers').update({ data: fresh }).eq('id', seller.id));
+  return c.json({ products: fresh.aiProducts || [], rules: fresh.aiRules || [] });
+});
+
+const STOCK_LABEL = { in: 'in stock', low: 'low stock', out: 'OUT OF STOCK', preorder: 'pre-order' };
+
+function productCatalogPrompt(products) {
+  const act = (products || []).filter((p) => p.active);
+  if (!act.length) return '';
+  const lines = act.map((p) => {
+    let l = p.name;
+    if (p.price) l += ` — ${p.price}`;
+    if (p.variants) l += `; variants: ${p.variants}`;
+    l += `; ${STOCK_LABEL[p.stock] || 'in stock'}`;
+    if (p.promo) l += `; promo: ${p.promo}`;
+    if (p.notes) l += `; ${p.notes}`;
+    return `- ${l}`;
+  });
+  return `<product_catalog>\n${lines.join('\n')}\n</product_catalog>\n` +
+    'When the buyer asks about a product, answer ONLY from the product catalog (price, variants, stock, promos). ' +
+    'If a product is OUT OF STOCK, say so and suggest an in-stock alternative from the catalog. ' +
+    'If the product is not in the catalog, say you will check and follow up.';
+}
+
+function sellerRulesPrompt(rules) {
+  const act = (rules || []).filter((r) => r.active);
+  if (!act.length) return '';
+  const lines = act.map((r, i) => `${i + 1}. ${r.title}${r.detail ? ` — ${r.detail}` : ''}`);
+  return `<seller_rules>\n${lines.join('\n')}\n</seller_rules>\n` +
+    'You MUST follow every seller rule above in every reply, without exception.';
+}
+
+// ---------- AI draft (DeepSeek/Claude via REST, template fallback) ----------
 function templateDraft(t0) {
   const t = (t0 || '').toLowerCase();
   if (/(ship|deliver|arrive|cebu|davao|luzon)/.test(t)) return 'Hi po! Yes, we ship nationwide 🚚 Orders are handed to the courier within 24 hours. Salamat po!';
@@ -975,11 +1051,15 @@ app.post('/api/ai/draft', async (c) => {
   try {
     const { data: kr } = await sb.from('knowledge').select('text').eq('seller_id', seller.id).maybeSingle();
     const knowledge = (kr && kr.text) || '(no knowledge pack yet)';
+    const catalogSection = productCatalogPrompt(seller.aiProducts);
+    const rulesSection = sellerRulesPrompt(seller.aiRules);
     const system = [
       'You are BilisBot, the customer-service assistant for a Philippine e-commerce seller using BilisOps Chat.',
       "Draft ONE reply to the buyer's latest message. Match the buyer's language (English, Tagalog, or Taglish).",
       'Be warm, concise (1-3 sentences), and helpful, like a friendly human seller. An emoji or two is fine.',
-      'Only state facts found in the store knowledge pack below. If the answer is not in it, promise to check and follow up instead of inventing details.',
+      ...(rulesSection ? [rulesSection] : []),
+      ...(catalogSection ? [catalogSection] : []),
+      'Only state facts found in the product catalog and store knowledge pack. If the answer is not in them, promise to check and follow up instead of inventing details.',
       `<store_knowledge_pack>\n${knowledge}\n</store_knowledge_pack>`,
       'Output ONLY the reply text, nothing else.',
     ].join('\n');

@@ -77,9 +77,9 @@ export function AiHub({ openPage }) {
           <div className="home-card" style={{ marginTop: 18 }}>
             <div className="home-card-head"><h3>🔌 How the real AI works here</h3></div>
             <ol className="ai-guide-steps">
-              <li>The backend already calls the Claude API for ✨ AI Draft — set ANTHROPIC_API_KEY where the server runs to switch from template drafts to Claude drafts.</li>
-              <li>Each draft sends the recent chat history plus your Knowledge Pack, so answers use your store's real facts.</li>
-              <li>Connect real marketplace webhooks (Shopee / Lazada / TikTok / Meta open platforms) to replace the 🧪 test simulator.</li>
+              <li>✨ AI Draft is powered by a real AI engine. Every draft reads the recent chat history, your Knowledge Pack, your <b>Product Catalog</b>, and your <b>AI Reply Rules</b>.</li>
+              <li>Add products in Product Catalog — the AI answers price, variant, and stock questions from that list only.</li>
+              <li>Write rules in AI Reply Rules — tone, promos, policies, what never to say. The AI must follow every active rule.</li>
               <li>Start in draft mode — an agent approves every AI reply — then graduate FAQs to full auto-reply.</li>
             </ol>
           </div>
@@ -133,6 +133,175 @@ export const HANDOVER_ITEMS = [
   { t: 'Refund or dispute keywords → human', d: 'Money matters always get a human touch.' },
   { t: 'Repeat buyer / VIP → human', d: 'Your best customers skip the bot when they want to.' },
 ];
+
+// ---------- Product Catalog (server-backed — the AI answers from this) ----------
+const STOCK_OPTIONS = [
+  { value: 'in', label: 'In stock' },
+  { value: 'low', label: 'Low stock' },
+  { value: 'out', label: 'Out of stock' },
+  { value: 'preorder', label: 'Pre-order' },
+];
+const stockLabel = v => (STOCK_OPTIONS.find(o => o.value === v) || STOCK_OPTIONS[0]).label;
+
+export function AiProducts() {
+  const { toast, logOp } = useApp();
+  const [products, setProducts] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [editor, setEditor] = useState(null); // null | {product?}
+
+  useEffect(() => {
+    api('/api/ai/config').then(d => { setProducts(d.products || []); setLoaded(true); }).catch(() => setLoaded(true));
+  }, []);
+
+  async function save(next, msg) {
+    setProducts(next);
+    try {
+      const d = await api('/api/ai/config', { method: 'PUT', body: { products: next } });
+      setProducts(d.products);
+      if (msg) toast(msg);
+    } catch {
+      toast('Could not save — try again');
+    }
+  }
+
+  const rows = products.map((p, i) => (
+    <tr key={p.id}>
+      <td><b>{p.name}</b>{p.notes ? <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{p.notes}</div> : null}</td>
+      <td>{p.price || '—'}</td>
+      <td>{p.variants || '—'}</td>
+      <td><StatusPill ok={p.stock === 'in'}>{stockLabel(p.stock)}</StatusPill></td>
+      <td>{p.promo || '—'}</td>
+      <td><StatusPill ok={p.active}>{p.active ? 'Active' : 'Hidden'}</StatusPill></td>
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <button className="btn-sm" onClick={() => setEditor({ product: p })}>Edit</button>{' '}
+        <button className="btn-sm" onClick={() => save(products.map((x, j) => j === i ? { ...x, active: !x.active } : x), `${p.name} ${p.active ? 'hidden from' : 'visible to'} AI`)}>
+          {p.active ? 'Hide' : 'Show'}
+        </button>{' '}
+        <button className="btn-sm danger" onClick={() => save(products.filter((_, j) => j !== i), `${p.name} deleted`)}>Delete</button>
+      </td>
+    </tr>
+  ));
+
+  return (
+    <PagePad wide>
+      <PageTitle title="Product Catalog"
+        sub="The AI answers product questions from this list only — price, variants, stock, and promos. Keep it updated and the AI stays accurate." />
+      <div className="toolbar-row">
+        <span className="page-sub" style={{ margin: 0 }}>
+          {loaded ? `${products.filter(p => p.active).length} of ${products.length} products visible to the AI` : 'Loading…'}
+        </span>
+        <div className="spacer" />
+        <button className="btn-sm primary" onClick={() => setEditor({})}>+ Add product</button>
+      </div>
+      <DataTable
+        columns={['Product', 'Price', 'Variants', 'Stock', 'Promo', 'AI visibility', 'Actions']}
+        rows={rows}
+        empty="No products yet. Add your products so the AI can answer price, stock, and variant questions accurately." />
+
+      {editor && (
+        <FormDialog
+          title={editor.product ? `Edit "${editor.product.name}"` : 'Add product'}
+          sub="Only what you put here is what the AI will say about this product."
+          submitLabel={editor.product ? 'Save changes' : 'Add product'}
+          fields={[
+            { key: 'name', label: 'Product name', required: true, value: editor.product?.name, placeholder: 'e.g. Bilis Classic Tee' },
+            { key: 'price', label: 'Price', value: editor.product?.price, placeholder: 'e.g. ₱299 each, 3 for ₱799' },
+            { key: 'variants', label: 'Variants (sizes / colors)', value: editor.product?.variants, placeholder: 'e.g. S-XXL; black, white, navy' },
+            { key: 'stock', label: 'Stock status', type: 'select', value: editor.product?.stock || 'in', options: STOCK_OPTIONS.map(o => ({ value: o.value, label: o.label })) },
+            { key: 'promo', label: 'Current promo (optional)', value: editor.product?.promo, placeholder: 'e.g. Free shipping this week' },
+            { key: 'notes', label: 'Notes for the AI (optional)', type: 'textarea', rows: 3, value: editor.product?.notes, placeholder: 'e.g. Cotton, true to size. Restock of navy arrives Aug 5.', hint: 'Care tips, restock dates, what to say when asked.' },
+          ]}
+          onClose={() => setEditor(null)}
+          onSubmit={v => {
+            if (editor.product) {
+              save(products.map(x => x.id === editor.product.id ? { ...x, ...v } : x), 'Product updated');
+            } else {
+              save([...products, { ...v, active: true }], 'Product added — the AI can use it now');
+              logOp(`Added product "${v.name}" to AI catalog`);
+            }
+          }}
+        />
+      )}
+    </PagePad>
+  );
+}
+
+// ---------- AI Rules (server-backed — enforced on every AI draft) ----------
+export function AiServerRules() {
+  const { toast, logOp } = useApp();
+  const [rules, setRules] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [editor, setEditor] = useState(null);
+
+  useEffect(() => {
+    api('/api/ai/config').then(d => { setRules(d.rules || []); setLoaded(true); }).catch(() => setLoaded(true));
+  }, []);
+
+  async function save(next, msg) {
+    setRules(next);
+    try {
+      const d = await api('/api/ai/config', { method: 'PUT', body: { rules: next } });
+      setRules(d.rules);
+      if (msg) toast(msg);
+    } catch {
+      toast('Could not save — try again');
+    }
+  }
+
+  const rows = rules.map((r, i) => (
+    <tr key={r.id}>
+      <td><b>{r.title}</b></td>
+      <td>{r.detail}</td>
+      <td><StatusPill ok={r.active}>{r.active ? 'On' : 'Off'}</StatusPill></td>
+      <td style={{ whiteSpace: 'nowrap' }}>
+        <button className="btn-sm" onClick={() => setEditor({ rule: r })}>Edit</button>{' '}
+        <button className="btn-sm" onClick={() => save(rules.map((x, j) => j === i ? { ...x, active: !x.active } : x), `${r.title} ${r.active ? 'disabled' : 'enabled'}`)}>
+          {r.active ? 'Disable' : 'Enable'}
+        </button>{' '}
+        <button className="btn-sm danger" onClick={() => save(rules.filter((_, j) => j !== i), 'Rule deleted')}>Delete</button>
+      </td>
+    </tr>
+  ));
+
+  return (
+    <PagePad wide>
+      <PageTitle title="AI Reply Rules"
+        sub="Your rules, enforced on every AI draft — tone, promos, policies, what never to say. Write them in your own words." />
+      <div className="toolbar-row">
+        <span className="page-sub" style={{ margin: 0 }}>
+          {loaded ? `${rules.filter(r => r.active).length} active rule${rules.filter(r => r.active).length === 1 ? '' : 's'}` : 'Loading…'}
+        </span>
+        <div className="spacer" />
+        <button className="btn-sm primary" onClick={() => setEditor({})}>+ New rule</button>
+      </div>
+      <DataTable
+        columns={['Rule', 'What the AI should do', 'Status', 'Actions']}
+        rows={rows}
+        empty={'No rules yet. Examples: "Always greet with po/opo", "Never offer discounts beyond the listed promo", "For refunds, hand over to a human agent."'} />
+
+      {editor && (
+        <FormDialog
+          title={editor.rule ? `Edit "${editor.rule.title}"` : 'New AI rule'}
+          sub="The AI must follow this in every reply."
+          submitLabel={editor.rule ? 'Save changes' : 'Create rule'}
+          fields={[
+            { key: 'title', label: 'Rule', required: true, value: editor.rule?.title, placeholder: 'e.g. Always reply with po/opo' },
+            { key: 'detail', label: 'Details', type: 'textarea', rows: 4, value: editor.rule?.detail, placeholder: 'e.g. Use polite Filipino forms in every reply. End with "Salamat po!"' },
+          ]}
+          onClose={() => setEditor(null)}
+          onSubmit={v => {
+            if (editor.rule) {
+              save(rules.map(x => x.id === editor.rule.id ? { ...x, ...v } : x), 'Rule updated');
+            } else {
+              save([...rules, { ...v, active: true }], 'Rule added — enforced on the next draft');
+              logOp(`Added AI rule "${v.title}"`);
+            }
+          }}
+        />
+      )}
+    </PagePad>
+  );
+}
 
 // ---------- AI rules pages ----------
 export function AiRulesPage({ title, sub, storageKey, columns, prompts, empty, openPage }) {
