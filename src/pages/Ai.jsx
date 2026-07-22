@@ -14,30 +14,32 @@ const FEATURES = [
 ];
 
 export function AiHub({ openPage }) {
-  const { toast, logOp } = useApp();
+  const { toast, logOp, stores } = useApp();
   const [trial, setTrial] = useLocal('ai_trial', false);
+  const [scope, setScope] = useState('account'); // 'account' | storeId
   const [knowledge, setKnowledge] = useState('');
   const [loaded, setLoaded] = useState(false);
 
+  // Each registered shop keeps its OWN knowledge pack; 'account' is the shared default.
   useEffect(() => {
-    api('/api/knowledge').then(d => { setKnowledge(d.text); setLoaded(true); }).catch(() => setLoaded(true));
-  }, []);
+    setLoaded(false);
+    const url = scope === 'account' ? '/api/knowledge' : `/api/stores/${scope}/knowledge`;
+    api(url).then(d => { setKnowledge(d.text); setLoaded(true); }).catch(() => { setKnowledge(''); setLoaded(true); });
+  }, [scope]);
 
   async function saveKnowledge() {
-    await api('/api/knowledge', { method: 'PUT', body: { text: knowledge } });
-    logOp('Updated AI knowledge pack');
-    toast('Knowledge pack saved — AI drafts will use it');
+    const url = scope === 'account' ? '/api/knowledge' : `/api/stores/${scope}/knowledge`;
+    await api(url, { method: 'PUT', body: { text: knowledge } });
+    const label = scope === 'account' ? 'account-wide' : `"${stores.find(s => s.id === scope)?.name || 'shop'}"`;
+    logOp(`Updated AI knowledge pack (${label})`);
+    toast(`Knowledge pack saved (${label}) — AI drafts will use it`);
   }
 
   return (
     <PagePad>
       <div style={{ textAlign: 'center', marginBottom: 22 }}>
         <h2 className="page-title">BilisBot — your AI co-seller</h2>
-        <p className="page-sub" style={{ marginBottom: 14 }}>Answers buyers in seconds, around the clock, in their language.</p>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <button className="btn-sm primary" onClick={() => openPage('plans')}>Get AI Assist Add-on</button>
-          <button className="btn-sm" onClick={() => toast('Support will reach out shortly!')}>Talk to support</button>
-        </div>
+        <p className="page-sub" style={{ marginBottom: 0 }}>Answers buyers in seconds, around the clock, in their language.</p>
       </div>
 
       <div className="ai-hub-grid">
@@ -60,17 +62,29 @@ export function AiHub({ openPage }) {
           </div>
 
           <div className="home-card" style={{ marginTop: 18 }}>
-            <div className="home-card-head"><h3>📚 Knowledge Pack</h3><span className="home-card-note">Facts the AI is allowed to use in drafts</span></div>
+            <div className="home-card-head"><h3>📚 Knowledge Pack</h3><span className="home-card-note">Each shop has its own facts; account-wide applies to all</span></div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+              <label style={{ fontSize: 12.5, color: 'var(--text-2)', fontWeight: 600 }}>Facts for:</label>
+              <select value={scope} onChange={e => setScope(e.target.value)}>
+                <option value="account">🌐 Account-wide (all shops)</option>
+                {stores.map(s => <option key={s.id} value={s.id}>{s.platform} — {s.name}</option>)}
+              </select>
+            </div>
             <textarea
               rows={6}
               style={{ width: '100%', padding: '11px 13px', borderRadius: 10, border: '1.5px solid var(--border)', background: 'var(--panel-2)', color: 'var(--text)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none', resize: 'vertical' }}
-              placeholder={'e.g.\nShipping: nationwide via J&T, 2-3 days Luzon, 5-7 days Vis/Min. Free shipping over ₱499.\nReturns: 7 days, unused items only.\nSizes: S (36), M (38), L (40), XL (42).'}
+              placeholder={scope === 'account'
+                ? 'Facts shared by ALL your shops, e.g.\nReturns: 7 days, unused items only.\nOffice hours: 9am-6pm Mon-Sat.'
+                : 'Facts for THIS shop only, e.g.\nShipping: nationwide via J&T, 2-3 days Luzon. Free shipping over ₱499.\nThis shop sells the tee collection only.'}
               value={knowledge}
               disabled={!loaded}
               onChange={e => setKnowledge(e.target.value)}
             />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-              <button className="btn-sm primary" onClick={saveKnowledge}>Save Knowledge Pack</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                Drafts use the shop's own pack first, then account-wide facts.
+              </span>
+              <button className="btn-sm primary" disabled={!loaded} onClick={saveKnowledge}>Save Knowledge Pack</button>
             </div>
           </div>
 

@@ -944,6 +944,27 @@ app.put('/api/knowledge', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- Per-store knowledge pack (each shop has its own facts) ----------
+app.get('/api/stores/:id/knowledge', async (c) => {
+  const seller = c.get('seller');
+  const { data } = await c.get('sb').from('stores').select('data')
+    .eq('id', c.req.param('id')).eq('seller_id', seller.id).maybeSingle();
+  if (!data) return c.json({ error: 'not_found' }, 404);
+  return c.json({ text: data.data.knowledge || '' });
+});
+
+app.put('/api/stores/:id/knowledge', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const { data } = await sb.from('stores').select('data')
+    .eq('id', c.req.param('id')).eq('seller_id', seller.id).maybeSingle();
+  if (!data) return c.json({ error: 'not_found' }, 404);
+  const store = data.data;
+  store.knowledge = String((await c.req.json().catch(() => ({})))?.text || '').slice(0, 20000);
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: seller.id, data: store }));
+  return c.json({ ok: true });
+});
+
 // ---------- AI config: product catalog + seller rules (feeds every draft) ----------
 const clampStr = (s, n) => String(s ?? '').slice(0, n);
 const STOCK_VALUES = new Set(['in', 'low', 'out', 'preorder']);
@@ -1049,8 +1070,15 @@ app.post('/api/ai/draft', async (c) => {
   if (!hasDeepSeek && !hasClaude) return fallback();
 
   try {
+    // Knowledge = this shop's own pack first, then account-wide facts.
     const { data: kr } = await sb.from('knowledge').select('text').eq('seller_id', seller.id).maybeSingle();
-    const knowledge = (kr && kr.text) || '(no knowledge pack yet)';
+    const { data: str } = await sb.from('stores').select('data').eq('id', conv.storeId).maybeSingle();
+    const convStore = str && str.data;
+    const knowledge = [
+      convStore && convStore.knowledge
+        ? `Shop-specific facts for "${convStore.name}" (${convStore.platform}):\n${convStore.knowledge}` : '',
+      kr && kr.text ? `Account-wide facts (all shops):\n${kr.text}` : '',
+    ].filter(Boolean).join('\n\n') || '(no knowledge pack yet)';
     const catalogSection = productCatalogPrompt(seller.aiProducts);
     const rulesSection = sellerRulesPrompt(seller.aiRules);
     const system = [
