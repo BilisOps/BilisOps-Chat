@@ -12,11 +12,6 @@ export function StoreAuth() {
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState(false);
-  const [platforms, setPlatforms] = useState([]);
-
-  React.useEffect(() => {
-    api('/api/platforms').then(setPlatforms).catch(() => {});
-  }, []);
 
   // Connect flow: ask the backend for the authorize URL, then send the browser there.
   // The platform (or the demo consent page) redirects back and the store gets created.
@@ -102,33 +97,6 @@ export function StoreAuth() {
         columns={['Store name', 'Platform', 'Site', 'Authorized at', 'Expires', 'Status', 'Actions']}
         rows={rows}
         empty='No stores connected yet. Pick a platform above and click "Connect store" to authorize through the platform.' />
-
-      <h3 style={{ margin: '30px 0 6px' }}>Open API readiness</h3>
-      <p className="page-sub">
-        Every marketplace names the same concepts differently — BilisOps Chat normalizes them all into one inbox.
-        Point each platform's developer console at the webhook URL below; add the platform's keys as server
-        environment variables to switch that adapter from demo mode to live signature-verified mode.
-      </p>
-      <DataTable
-        columns={['Platform', 'Store is called', 'Buyer is called', 'Chat unit', 'Order ref', 'Auth model', 'Webhook URL', 'Mode']}
-        rows={platforms.map(p => (
-          <tr key={p.key}>
-            <td><b>{p.name}</b></td>
-            <td>{p.terms.store}</td>
-            <td>{p.terms.buyer}</td>
-            <td>{p.terms.chat}</td>
-            <td>{p.terms.order}</td>
-            <td style={{ fontSize: 11.5 }}>{p.authModel}</td>
-            <td>
-              <code style={{ fontSize: 11, cursor: 'pointer' }} title="Click to copy"
-                onClick={() => { navigator.clipboard?.writeText(p.webhookUrl); toast('Webhook URL copied'); }}>
-                {p.webhookUrl.replace(/^https?:\/\//, '')}
-              </code>
-            </td>
-            <td><StatusPill ok={p.ready}>{p.ready ? 'Live' : 'Demo'}</StatusPill></td>
-          </tr>
-        ))}
-        empty="Loading platform adapters..." />
     </PagePad>
   );
 }
