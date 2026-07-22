@@ -387,8 +387,151 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
     };
   }
   await w(sb.from('stores').upsert({ id: store.id, seller_id: sellerId, data: store }));
-  return c.redirect(`/?connected=${key}&shop=${encodeURIComponent(shopName)}`, 302);
+  // TikTok: resolve shop_cipher + real shop_id right away (best-effort — the
+  // chat sync also repairs this lazily if it fails here).
+  if (key === 'tiktok' && tokens) {
+    if (/^SANDBOX/i.test(store.name)) store.sandbox = true;
+    await ttEnsureShop(c.env, sb, store).catch(() => {});
+  }
+  return c.redirect(`/?connected=${key}&shop=${encodeURIComponent(store.name)}`, 302);
 });
+
+// ---------- TikTok chat PULL sync (signed Shop API) ----------
+// Webhooks push new messages in real time, but existing conversations must be
+// PULLED from the TikTok customer-service API. Signing scheme (same as OMS):
+//   plain = app_secret + path + (sorted key+value pairs, excl. sign/access_token) + app_secret
+//   sign  = HMAC-SHA256(plain, app_secret) → lowercase hex
+// Access token rides in the x-tts-access-token header; shop_cipher as a param.
+const TT_PROD = 'https://open-api.tiktokglobalshop.com';
+const TT_SANDBOX = 'https://open-api-sandbox.tiktokglobalshop.com';
+
+async function ttFetch(env, store, path, extraQuery = {}, rawBody = null) {
+  const params = {
+    app_key: env.TIKTOK_APP_KEY,
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    ...(store.shopCipher ? { shop_cipher: store.shopCipher } : {}),
+    ...extraQuery,
+  };
+  const plain = env.TIKTOK_APP_SECRET + path
+    + Object.keys(params).sort().map((k) => k + params[k]).join('')
+    + (rawBody || '')
+    + env.TIKTOK_APP_SECRET;
+  const sign = await hmacHex(env.TIKTOK_APP_SECRET, plain);
+  const qs = new URLSearchParams({ ...params, sign }).toString();
+  const base = store.sandbox ? TT_SANDBOX : TT_PROD;
+  return fetch(`${base}${path}?${qs}`, {
+    method: rawBody ? 'POST' : 'GET',
+    headers: { 'x-tts-access-token': store.tokens.access_token, 'content-type': 'application/json' },
+    body: rawBody || undefined,
+  }).then((r) => r.json()).catch((e) => ({ code: -1, message: String(e && e.message || e) }));
+}
+
+// Send a seller reply out to the TikTok buyer (conversation id = conv.buyerExternalId).
+async function ttSendMessage(env, sb, store, conv, text) {
+  await ttEnsureShop(env, sb, store);
+  const body = JSON.stringify({ type: 'TEXT', content: JSON.stringify({ content: text }) });
+  const res = await ttFetch(env, store, `/customer_service/202309/conversations/${conv.buyerExternalId}/messages`, {}, body);
+  if (res?.code !== 0) throw new Error(res?.message || `send failed (${res?.code})`);
+}
+
+// Resolve shop_cipher (+ real shop id/name) once after authorization. Sandbox
+// shops only answer on the sandbox host — detect by trying both.
+async function ttEnsureShop(env, sb, store) {
+  if (store.shopCipher) return store;
+  let res = await ttFetch(env, store, '/authorization/202309/shops');
+  if (res?.code !== 0 && !store.sandbox) {
+    const trySandbox = await ttFetch(env, { ...store, sandbox: true }, '/authorization/202309/shops');
+    if (trySandbox?.code === 0) { store.sandbox = true; res = trySandbox; }
+  }
+  const shop = res?.data?.shops && res.data.shops[0];
+  if (!shop) throw new Error(res?.message || 'could not fetch authorized shop');
+  store.shopCipher = shop.cipher;
+  if (shop.id) store.externalId = String(shop.id);      // webhooks route by shop_id
+  if (shop.name) store.name = shop.name;
+  store.region = shop.region || store.region || null;
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store }));
+  return store;
+}
+
+function ttMessageText(m) {
+  let t = '';
+  try { const j = JSON.parse(m.content || '{}'); t = j.content || j.text || ''; }
+  catch { t = String(m.content || ''); }
+  if (!t && m.type && m.type !== 'TEXT') t = `[${String(m.type).toLowerCase()}]`;
+  return t;
+}
+
+async function ttSyncChats(env, sb, store) {
+  await ttEnsureShop(env, sb, store);
+  const convRes = await ttFetch(env, store, '/customer_service/202309/conversations', { page_size: '10' });
+  if (convRes?.code !== 0) throw new Error(convRes?.message || `conversations failed (${convRes?.code})`);
+  const list = convRes.data?.conversations || [];
+
+  const { data: rows } = await sb.from('conversations').select('data').eq('seller_id', store.sellerId);
+  const existing = (rows || []).map((r) => r.data);
+
+  for (const cv of list) {
+    const msgRes = await ttFetch(env, store, `/customer_service/202309/conversations/${cv.id}/messages`, { page_size: '10' });
+    if (msgRes?.code !== 0) continue;
+    const buyer = (cv.participants || []).find((p) => (p.role || '').toUpperCase() === 'BUYER') || {};
+    let conv = existing.find((x) => x.storeId === store.id && x.buyerExternalId === String(cv.id));
+    if (!conv) {
+      conv = {
+        id: id('cnv'), sellerId: store.sellerId, storeId: store.id, platform: store.key,
+        buyerName: buyer.nickname || 'TikTok User', buyerExternalId: String(cv.id),
+        preview: '', unread: false, resolved: false, test: false,
+        updatedAt: new Date().toISOString(), messages: [],
+      };
+      existing.push(conv);
+    }
+    if (buyer.nickname) conv.buyerName = buyer.nickname;
+    const seen = new Set(conv.messages.map((m) => m.extId).filter(Boolean));
+    let added = 0;
+    const incoming = (msgRes.data?.messages || [])
+      .filter((m) => (m.type || 'TEXT') !== 'SYSTEM')
+      .map((m) => ({
+        extId: String(m.id || ''),
+        direction: ((m.sender && m.sender.role) || '').toUpperCase() === 'BUYER' ? 'in' : 'out',
+        text: ttMessageText(m),
+        at: m.create_time ? new Date(Number(m.create_time) * 1000).toISOString() : new Date().toISOString(),
+      }))
+      .filter((m) => m.text && !seen.has(m.extId));
+    if (incoming.length) {
+      conv.messages = conv.messages.concat(incoming).sort((a, b) => (a.at < b.at ? -1 : 1));
+      added = incoming.length;
+    }
+    if (conv.messages.length) {
+      const last = conv.messages[conv.messages.length - 1];
+      conv.preview = last.text;
+      conv.updatedAt = last.at;
+      if (added && last.direction === 'in') conv.unread = true;
+    }
+    await w(sb.from('conversations').upsert({ id: conv.id, seller_id: conv.sellerId, updated_at: conv.updatedAt, data: conv }));
+  }
+
+  store.lastChatSyncAt = new Date().toISOString();
+  store.lastChatSyncError = null;
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store }));
+}
+
+// Throttled: at most one pull per store per minute, piggybacked on inbox reads.
+async function maybeSyncTikTok(c, sb, sellerId) {
+  if (!c.env.TIKTOK_APP_KEY || !c.env.TIKTOK_APP_SECRET) return;
+  const { data } = await sb.from('stores').select('data').eq('seller_id', sellerId);
+  for (const r of data || []) {
+    const store = r.data;
+    if (store.key !== 'tiktok' || !store.tokens || !store.tokens.access_token) continue;
+    const last = store.lastChatSyncAt ? Date.parse(store.lastChatSyncAt) : 0;
+    if (Date.now() - last < 60 * 1000) continue;
+    try {
+      await ttSyncChats(c.env, sb, store);
+    } catch (e) {
+      store.lastChatSyncAt = new Date().toISOString();
+      store.lastChatSyncError = String(e && e.message || e).slice(0, 300);
+      await sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store });
+    }
+  }
+}
 
 // ---------- Platform webhooks: normalize every marketplace into ONE model ----------
 // Each platform names & shapes things differently. These translate the native
@@ -462,7 +605,9 @@ const NORMALIZE = {
       if (!text) return null;
       return {
         externalShopId: String(body.shop_id || ''),
-        buyerExternalId: String((d.sender && d.sender.im_user_id) || ''),
+        // Key by conversation_id (same key the pull-sync uses) so webhook pushes
+        // and API pulls land in ONE conversation instead of duplicating.
+        buyerExternalId: String(d.conversation_id || (d.sender && d.sender.im_user_id) || ''),
         buyerName: (d.sender && d.sender.nickname) || 'TikTok User',
         text,
         sentAt: d.create_time ? new Date(Number(d.create_time) * 1000).toISOString() : new Date().toISOString(),
@@ -728,7 +873,10 @@ async function ownConv(c, sb) {
 
 app.get('/api/conversations', async (c) => {
   const seller = c.get('seller');
-  const { data } = await c.get('sb').from('conversations').select('data')
+  const sb = c.get('sb');
+  // Pull fresh TikTok chats (throttled to once/min per store) before answering.
+  await maybeSyncTikTok(c, sb, seller.id).catch(() => {});
+  const { data } = await sb.from('conversations').select('data')
     .eq('seller_id', seller.id).order('updated_at', { ascending: false });
   return c.json((data || []).map((r) => { const { sellerId, ...pub } = r.data; return pub; }));
 });
@@ -742,8 +890,26 @@ app.post('/api/conversations/:id/reply', async (c) => {
   const now = new Date().toISOString();
   conv.messages.push({ direction: 'out', text, at: now });
   conv.preview = text; conv.updatedAt = now;
+
+  // Best-effort outbound: push the reply to the real platform when connected.
+  let delivered = null;
+  if (conv.platform === 'tiktok' && c.env.TIKTOK_APP_KEY && c.env.TIKTOK_APP_SECRET) {
+    const { data: sr } = await sb.from('stores').select('data').eq('id', conv.storeId).maybeSingle();
+    const store = sr && sr.data;
+    if (store && store.tokens && store.tokens.access_token && !conv.test) {
+      try {
+        await ttSendMessage(c.env, sb, store, conv, text);
+        delivered = true;
+        conv.lastSendError = null;
+      } catch (e) {
+        delivered = false;
+        conv.lastSendError = String(e && e.message || e).slice(0, 300);
+      }
+    }
+  }
+
   await w(sb.from('conversations').update({ updated_at: now, data: conv }).eq('id', conv.id));
-  return c.json({ ok: true });
+  return c.json({ ok: true, delivered });
 });
 
 app.post('/api/conversations/:id/read', async (c) => {
