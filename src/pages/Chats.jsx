@@ -154,7 +154,7 @@ export default function Chats() {
           ) : filtered.map(c => {
             const m = platformMeta[c.platform];
             return (
-              <div key={c.id} className={`conv-item${selectedId === c.id ? ' active' : ''}`} onClick={() => open(c)}>
+              <div key={c.id} className={`conv-item${selectedId === c.id ? ' active' : ''}${c.unread ? ' unread' : ''}`} onClick={() => open(c)}>
                 <div className="conv-avatar">
                   {initials(c.name)}
                   <span className="platform-dot logo"><PlatformLogo k={c.platform} size={11} title={m?.label} /></span>

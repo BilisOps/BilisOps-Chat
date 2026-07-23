@@ -487,6 +487,14 @@ a { color: inherit; }
 }
 
 .conv-item:hover { background: var(--panel-2); }
+
+/* Unread — the whole row stays highlighted until the chat is opened */
+.conv-item.unread { background: #fff7ed; border-left: 3px solid #fdba74; }
+.conv-item.unread:hover { background: #ffedd5; }
+.conv-item.unread .conv-name { font-weight: 800; color: var(--text); }
+.conv-item.unread .conv-preview { color: var(--text); font-weight: 600; }
+.conv-item.unread .conv-time { color: var(--brand); font-weight: 700; }
+
 .conv-item.active { background: var(--panel-2); border-left: 3px solid var(--brand); }
 
 .conv-avatar {
