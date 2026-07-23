@@ -31,9 +31,9 @@ export default function Plans() {
           <div className="addon-name">🤖 AI Assist Add-on</div>
           <div className="addon-price">₱3,990<span>/year</span></div>
           <ul className="addon-list">
-            <li>AI answers buyers 24/7, no queue limit</li>
-            <li>Trained on your own store's FAQs</li>
-            <li>Hands off to a human anytime</li>
+            <li>Real AI reply drafts (✨ AI Draft) — you approve each send</li>
+            <li>AI chat summaries on the Chat Dashboard</li>
+            <li>Grounded in your catalog, rules, and knowledge pack</li>
           </ul>
           <button className="btn-sm" onClick={() => addAddon('AI Assist')}>
             {addons.includes('AI Assist') ? '✓ Added' : 'Add to plan'}
@@ -44,8 +44,8 @@ export default function Plans() {
           <div className="addon-price">₱5,990<span>/year</span></div>
           <ul className="addon-list">
             <li>Everything in AI Assist</li>
-            <li>Unlimited product knowledge base</li>
-            <li>Latest models, sharper answers daily</li>
+            <li>🤖 Full auto-reply — BilisBot answers buyers 24/7 on its own</li>
+            <li>AI vs Agents reply tracking on the dashboard</li>
           </ul>
           <button className="btn-sm" onClick={() => addAddon('AI Assist Pro')}>
             {addons.includes('AI Assist Pro') ? '✓ Added' : 'Add to plan'}

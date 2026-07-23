@@ -14,7 +14,9 @@ const FEATURES = [
 ];
 
 export function AiHub({ openPage }) {
-  const { toast, logOp, stores } = useApp();
+  const { toast, logOp, stores, addons } = useApp();
+  const hasAI = addons.includes('AI Assist') || addons.includes('AI Assist Pro');
+  const hasPro = addons.includes('AI Assist Pro');
   const [autoReply, setAutoReply] = useState(false);
   const [scope, setScope] = useState('account'); // 'account' | storeId
   const [knowledge, setKnowledge] = useState('');
@@ -25,14 +27,24 @@ export function AiHub({ openPage }) {
   }, []);
 
   async function toggleAutoReply(v) {
+    if (v && !hasPro) {
+      toast('Full auto-reply is an AI Assist Pro feature — grab it in Plans & Billing');
+      openPage?.('plans');
+      return;
+    }
     setAutoReply(v);
     try {
       await api('/api/ai/config', { method: 'PUT', body: { autoReply: v } });
       logOp(`AI auto-reply ${v ? 'enabled' : 'disabled'}`);
       toast(v ? '🤖 AI auto-reply ON — BilisBot now answers new buyer messages' : 'AI auto-reply off — back to drafts only');
-    } catch {
+    } catch (e) {
       setAutoReply(!v);
-      toast('Could not save — try again');
+      if (e?.error === 'addon_required') {
+        toast('AI auto-reply needs the AI Assist Pro add-on');
+        openPage?.('plans');
+      } else {
+        toast('Could not save — try again');
+      }
     }
   }
 
@@ -73,9 +85,18 @@ export function AiHub({ openPage }) {
           </div>
 
           <div className="ai-trial-bar">
-            <span>🤖 <b>AI auto-reply</b> — BilisBot answers every new buyer message on its own, following your catalog and rules</span>
+            <span>
+              🤖 <b>AI auto-reply</b> — BilisBot answers every new buyer message on its own, following your catalog and rules
+              {!hasPro && <span className="pro-pill" onClick={() => openPage?.('plans')}>AI Assist Pro</span>}
+            </span>
             <Toggle checked={autoReply} onChange={toggleAutoReply} />
           </div>
+          {!hasAI && (
+            <div className="ai-locked-note" onClick={() => openPage?.('plans')}>
+              ✨ Real AI replies (drafts, auto-reply, summaries) are part of the <b>AI Assist add-ons</b> — without one,
+              BilisBot uses free template replies. Tap to see Plans &amp; Billing.
+            </div>
+          )}
 
           <div className="home-card" style={{ marginTop: 18 }}>
             <div className="home-card-head"><h3>📚 Knowledge Pack</h3><span className="home-card-note">Each shop has its own facts; account-wide applies to all</span></div>

@@ -1059,7 +1059,12 @@ app.put('/api/ai/config', async (c) => {
   const rules = sanitizeRules(body.rules);
   if (products) fresh.aiProducts = products;
   if (rules) fresh.aiRules = rules;
-  if ('autoReply' in body) fresh.aiAutoReply = Boolean(body.autoReply);
+  if ('autoReply' in body) {
+    if (Boolean(body.autoReply) && !hasProAddon(fresh)) {
+      return c.json({ error: 'addon_required', message: 'AI auto-reply needs the AI Assist Pro add-on.' }, 403);
+    }
+    fresh.aiAutoReply = Boolean(body.autoReply);
+  }
   await w(sb.from('sellers').update({ data: fresh }).eq('id', seller.id));
   return c.json({
     products: fresh.aiProducts || [],
@@ -1106,12 +1111,17 @@ function templateDraft(t0) {
   return "Hi po! Thanks for reaching out — we'll get back to you with the details right away. Salamat! 😊";
 }
 
+// AI entitlements — real AI costs money per reply, so it rides on the add-ons.
+const hasAIAddon = (s) => (s.addons || []).some((a) => a === 'AI Assist' || a === 'AI Assist Pro');
+const hasProAddon = (s) => (s.addons || []).includes('AI Assist Pro');
+
 // Core engine: build the grounded prompt and generate one reply.
 // Used by the manual ✨ AI Draft button AND the auto-reply pipeline.
 async function generateAIReply(env, sb, seller, conv) {
   const lastIn = [...conv.messages].reverse().find((m) => m.direction === 'in');
   if (!lastIn) return null;
   const fallback = { draft: templateDraft(lastIn.text), engine: 'template' };
+  if (!hasAIAddon(seller)) return { ...fallback, locked: true };
   const hasDeepSeek = Boolean(env.DEEPSEEK_API_KEY);
   const hasClaude = Boolean(env.ANTHROPIC_API_KEY);
   if (!hasDeepSeek && !hasClaude) return fallback;
@@ -1193,7 +1203,9 @@ app.post('/api/ai/draft', async (c) => {
   const conv = row.data;
   const res = await generateAIReply(c.env, sb, seller, conv);
   if (!res) return c.json({ error: 'no_buyer_message' }, 400);
-  if (res.engine === 'template') {
+  if (res.locked) {
+    res.note = 'Template draft — real AI replies are part of the AI Assist add-on (Plans & Billing).';
+  } else if (res.engine === 'template') {
     res.note = 'Add DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) on the server to enable real AI replies.';
   }
   return c.json(res);
@@ -1207,6 +1219,7 @@ async function autoReplyIfEnabled(env, sb, sellerId, conv) {
     const { data: sr } = await sb.from('sellers').select('data').eq('id', sellerId).maybeSingle();
     const seller = sr && sr.data;
     if (!seller || !seller.aiAutoReply) return null;
+    if (!hasProAddon(seller)) return null; // auto-reply is an AI Assist Pro feature
     const last = conv.messages[conv.messages.length - 1];
     if (!last || last.direction !== 'in') return null;
     const res = await generateAIReply(env, sb, seller, conv);
@@ -1289,6 +1302,9 @@ app.get('/api/chat-insights', async (c) => {
 app.post('/api/ai/chat-summary', async (c) => {
   const seller = c.get('seller');
   const sb = c.get('sb');
+  if (!hasAIAddon(seller)) {
+    return c.json({ summary: 'AI summaries are part of the AI Assist add-on — see Plans & Billing.', engine: 'locked', locked: true });
+  }
   if (!c.env.DEEPSEEK_API_KEY) {
     return c.json({ summary: 'AI summary needs the AI engine configured on the server.', engine: 'template' });
   }
