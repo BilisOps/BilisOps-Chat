@@ -1,42 +1,22 @@
 import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { api } from '../api.js';
-import { PagePad, RangeChips } from '../components.jsx';
+import { PagePad, SplitCard } from '../components.jsx';
 import { PlatformLogo } from '../brand.jsx';
 
 export default function Home({ openPage }) {
   const { plan, conversations, connected, settings, toast, syncAll, stats } = useApp();
-  const [range, setRange] = useState('Yesterday');
   const [updated, setUpdated] = useState(() => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
   const pending = conversations.filter(c => c.unread).length;
   const served = conversations.filter(c => c.resolved).length;
-  const total = conversations.length;
-  const handled = conversations.filter(c => c.messages.some(m => m.direction === 'out')).length;
   const currency = settings?.currency || 'PHP';
   const t = stats?.totals;
+  const hs = stats?.handlerSplit;
+  const g = (grp, field) => hs?.[grp]?.[field];
+  const num = v => (v === null || v === undefined ? '—' : v);
   const fmt = v => (v === null || v === undefined ? '—' : v);
-
-  // Combined (all channels) values come straight from server stats;
-  // AI is 0 until the auto-reply engine sends messages itself.
-  const metrics = [
-    ['Buyers served', t?.replied, 'ti-users'],
-    ['Reception sessions', t?.conversations, 'ti-message-circle'],
-    ['Response rate', t?.responseRatePct != null ? `${t.responseRatePct}%` : null, 'ti-activity'],
-    ['Avg. first response', t?.avgFirstResponseMin != null ? `${t.avgFirstResponseMin} min` : null, 'ti-clock'],
-    ['Guided buyers', t?.orders ? t.replied : t?.orders, 'ti-user-check'],
-    ['Guided orders', t?.orders, 'ti-shopping-cart'],
-    ['Order conversion', t?.conversionPct != null ? `${t.conversionPct}%` : null, 'ti-trending-up'],
-    [`Guided sales (${currency})`, t?.amount != null ? t.amount.toLocaleString() : null, 'ti-coin'],
-  ];
-
-  const journey = [
-    { icon: 'ti-message-circle', label: 'Buyer inquiries', val: total || '—' },
-    { icon: 'ti-headset', label: 'Conversations handled', val: total ? handled : '—' },
-    { icon: 'ti-shopping-cart-check', label: 'Orders guided', val: t?.orders ?? '—' },
-  ];
-  const pctHandled = total ? `${Math.round((handled / total) * 100)}% replied` : '—';
-  const pctConvert = t?.conversionPct != null ? `${t.conversionPct}% convert` : '—';
+  const guideBuyersTotal = hs ? ['ai', 'human', 'joint'].reduce((s, k) => s + (hs[k].guideBuyers || 0), 0) : 0;
 
   async function simulateOrder() {
     try {
@@ -118,42 +98,53 @@ export default function Home({ openPage }) {
       <div className="home-card">
         <div className="home-card-head">
           <h3>Conversation Overview</h3>
-          <RangeChips options={['Yesterday', 'Last 7 days', 'Last 30 days']} active={range} onChange={setRange} />
+          <span className="home-card-note">
+            Last 90 days · who handled it: 🤖 AI, 👤 Agents, or 🤝 Joint
+            <button className="btn-sm" style={{ fontSize: 11 }} onClick={() => openPage('salesconv')}>Full report →</button>
+          </span>
         </div>
-        <div className="journey">
-          {journey.map((s, i) => (
-            <React.Fragment key={s.label}>
-              <div className="j-step">
-                <div className="j-ic"><i className={`ti ${s.icon}`} aria-hidden="true" /></div>
-                <div>
-                  <div className="j-val">{s.val}</div>
-                  <div className="j-lbl">{s.label}</div>
-                </div>
-              </div>
-              {i < journey.length - 1 && (
-                <div className="j-link">
-                  <i className="ti ti-arrow-right" aria-hidden="true" />
-                  <span className="j-pct">{i === 0 ? pctHandled : pctConvert}</span>
-                </div>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-        <div className="kpi-grid">
-          {metrics.map(([title, combined, icon]) => (
-            <div key={title} className="kpi">
-              <div className="kpi-top">
-                <span className="kpi-lbl">{title}</span>
-                <i className={`ti ${icon}`} aria-hidden="true" />
-              </div>
-              <div className="kpi-val">{fmt(combined)}</div>
-              <div className="kpi-split">
-                <span className="k-ai">AI 0</span>
-                <span>·</span>
-                <span className="k-agents">Agents {fmt(combined)}</span>
-              </div>
+        <div className="funnel-wrap">
+          <div className="funnel">
+            <div className="fn-stage s1">
+              <div className="fn-lbl">Buyer inquiries</div>
+              <div className="fn-num">{fmt(t?.conversations)}</div>
             </div>
-          ))}
+            <div className="fn-stage s2">
+              <div className="fn-lbl">Reception sessions</div>
+              <div className="fn-num">{fmt(t?.replied)}</div>
+            </div>
+            <div className="fn-stage s3">
+              <div className="fn-lbl">Orders guided</div>
+              <div className="fn-num">{fmt(t?.orders)}</div>
+            </div>
+            <div className="fn-rate r1">
+              <span>Response rate</span>
+              <b>{t?.responseRatePct != null ? `${t.responseRatePct}%` : '--'}</b>
+            </div>
+            <div className="fn-rate r2">
+              <span>Order conversion</span>
+              <b>{t?.conversionPct != null ? `${t.conversionPct}%` : '--'}</b>
+            </div>
+          </div>
+
+          <div className="split-grid">
+            <SplitCard title="Buyer inquiries" total={fmt(t?.conversations)}
+              get={k => num(g(k, 'sessions'))} />
+            <SplitCard title="Reception sessions" total={fmt(t?.replied)}
+              get={k => num(g(k, 'sessions'))} />
+            <SplitCard title="Response rate" total={t?.responseRatePct != null ? `${t.responseRatePct}%` : '—'}
+              get={k => (t?.replied ? Math.round(((g(k, 'sessions') || 0) / t.replied) * 100) : '—')} suffix="%" />
+            <SplitCard title="Avg. first response (min)" total={fmt(t?.avgFirstResponseMin)}
+              get={k => num(g(k, 'avgFirstResponseMin'))} />
+            <SplitCard title="Guide buyers" total={guideBuyersTotal}
+              get={k => num(g(k, 'guideBuyers'))} />
+            <SplitCard title="Guide orders" total={fmt(t?.orders)}
+              get={k => num(g(k, 'orders'))} />
+            <SplitCard title="Order conversion rate" total={t?.conversionPct != null ? `${t.conversionPct}%` : '—'}
+              get={k => num(g(k, 'conversionPct'))} suffix="%" />
+            <SplitCard title={`Amount guided (${currency})`} total={t?.amount != null ? t.amount.toLocaleString() : '—'}
+              get={k => (g(k, 'amount') != null ? g(k, 'amount').toLocaleString() : '—')} />
+          </div>
         </div>
       </div>
     </PagePad>

@@ -241,6 +241,30 @@ export function useRangeState(initial = 'Day') {
   return { range, setRange, mode: range.toLowerCase() };
 }
 
+// ---------- SplitCard — metric with AI / Agents / Joint handler breakdown ----------
+const HANDLERS = [
+  ['ai', '🤖 AI'],
+  ['human', '👤 Agents'],
+  ['joint', '🤝 Joint'],
+];
+
+export function SplitCard({ title, total, get, suffix = '' }) {
+  return (
+    <div className="split-card">
+      <div className="sc-title">{title}</div>
+      <div className="sc-val">{total}</div>
+      <div className="sc-rows">
+        {HANDLERS.map(([k, label]) => (
+          <div className="sc-row" key={k}>
+            <span className={`sc-h ${k}`}>{label}</span>
+            <span className="sc-n">{get(k)}{suffix && get(k) !== '—' ? suffix : ''}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------- FormDialog — the white editor used by every "Add / Edit" button ----------
 // fields: [{ key, label, type: 'text'|'textarea'|'select', placeholder, options,
 //            rows, required, value, hint }]

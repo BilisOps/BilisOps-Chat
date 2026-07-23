@@ -1,34 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { downloadFile } from '../api.js';
-import { PagePad, PageTitle, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily } from '../components.jsx';
+import { PagePad, PageTitle, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily, SplitCard } from '../components.jsx';
 import { PlatformLogo } from '../brand.jsx';
 
 const fmt = v => (v === null || v === undefined ? '—' : v);
-
-// ---------- Sales Conversion (funnel + AI/Agents/Joint split cards) ----------
-const HANDLERS = [
-  ['ai', '🤖 AI'],
-  ['human', '👤 Agents'],
-  ['joint', '🤝 Joint'],
-];
-
-function SplitCard({ title, total, get, suffix = '' }) {
-  return (
-    <div className="split-card">
-      <div className="sc-title">{title}</div>
-      <div className="sc-val">{total}</div>
-      <div className="sc-rows">
-        {HANDLERS.map(([k, label]) => (
-          <div className="sc-row" key={k}>
-            <span className={`sc-h ${k}`}>{label}</span>
-            <span className="sc-n">{get(k)}{suffix && get(k) !== '—' ? suffix : ''}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export function SalesConv() {
   const { toast, settings, stats } = useApp();
