@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { api } from '../api.js';
 import { PagePad, RangeChips } from '../components.jsx';
+import { PlatformLogo } from '../brand.jsx';
 
 export default function Home({ openPage }) {
   const { plan, conversations, connected, settings, toast, syncAll, stats } = useApp();
@@ -68,7 +69,7 @@ export default function Home({ openPage }) {
         <div className="platform-row">
           {connected.map(i => (
             <div key={i.name} className={`platform-tile${i.connected ? ' connected' : ''}`} onClick={() => openPage('storeauth')}>
-              <div className="p-icon">{i.icon}</div>
+              <div className="p-icon"><PlatformLogo k={i.key} size={26} title={i.name} /></div>
               <div className="p-name">{i.name}</div>
               <div className="p-state">{i.connected ? 'Connected' : 'Not connected'}</div>
             </div>

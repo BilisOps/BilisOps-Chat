@@ -3,6 +3,7 @@ import { useApp, useLocal } from '../state.jsx';
 import { api, initials } from '../api.js';
 import { platformMeta } from '../data.js';
 import { FormDialog } from '../components.jsx';
+import { PlatformLogo } from '../brand.jsx';
 
 const FILTERS = [
   { key: 'all', label: 'All' }, { key: 'unread', label: 'Unread' },
@@ -114,7 +115,7 @@ export default function Chats() {
           return (
             <div key={s.id} className={`store-item${storeFilter === s.id ? ' active' : ''}`}
               title={`${s.platform} — ${s.nickname || s.name}`} onClick={() => setStoreFilter(s.id)}>
-              <span className="store-ic">{m?.icon || '🏬'}</span>
+              <span className="store-ic"><PlatformLogo k={s.key} size={15} title={s.platform} /></span>
               <span className="store-name">{s.nickname || s.name}</span>
               {n > 0 && <span className="store-badge">{n}</span>}
             </div>
@@ -156,7 +157,7 @@ export default function Chats() {
               <div key={c.id} className={`conv-item${selectedId === c.id ? ' active' : ''}`} onClick={() => open(c)}>
                 <div className="conv-avatar">
                   {initials(c.name)}
-                  <span className={`platform-dot ${m?.dot || ''}`}>{m?.icon}</span>
+                  <span className="platform-dot logo"><PlatformLogo k={c.platform} size={11} title={m?.label} /></span>
                 </div>
                 <div className="conv-main">
                   <div className="conv-top">
@@ -250,7 +251,11 @@ export default function Chats() {
         <div className="info-profile">
           <div className="info-avatar">{selected ? initials(selected.name) : '—'}</div>
           <div className="name">{selected ? selected.name : 'No buyer selected'}</div>
-          <div className="platform-tag">{selected ? `${meta?.icon} ${meta?.label} buyer` : '—'}</div>
+          <div className="platform-tag">
+            {selected
+              ? <><PlatformLogo k={selected.platform} size={13} title={meta?.label} /> {meta?.label} buyer</>
+              : '—'}
+          </div>
         </div>
         <div className="info-section">
           <h4>Buyer Stats</h4>

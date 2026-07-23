@@ -1006,7 +1006,12 @@ a { color: inherit; }
 }
 
 .platform-tile:hover { border-color: var(--brand); }
-.platform-tile .p-icon { font-size: 22px; }
+.platform-tile .p-icon { font-size: 22px; display: flex; justify-content: center; }
+
+/* real platform logo marks */
+.platform-dot.logo { background: #fff; border: 1.5px solid var(--border); }
+.store-ic { display: flex; justify-content: center; }
+.info-profile .platform-tag { display: inline-flex; align-items: center; gap: 5px; }
 .platform-tile .p-name { font-size: 12.5px; font-weight: 700; margin-top: 6px; }
 .platform-tile .p-state { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .platform-tile.connected { border-color: var(--good); background: rgba(31, 174, 95, 0.06); }
