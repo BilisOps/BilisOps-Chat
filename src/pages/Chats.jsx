@@ -203,6 +203,7 @@ export default function Chats() {
             <div className="empty-state">No messages in this conversation yet.</div>
           ) : selected.messages.map((m, i) => (
             <div key={i} className={`msg ${m.direction}`}>
+              {m.ai && <div className="msg-ai-tag">🤖 BilisBot · auto-reply</div>}
               {m.text}
               <div className="msg-time">{m.time}</div>
               {translate && m.direction === 'in' && (

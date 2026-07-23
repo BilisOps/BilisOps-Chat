@@ -15,10 +15,26 @@ const FEATURES = [
 
 export function AiHub({ openPage }) {
   const { toast, logOp, stores } = useApp();
-  const [trial, setTrial] = useLocal('ai_trial', false);
+  const [autoReply, setAutoReply] = useState(false);
   const [scope, setScope] = useState('account'); // 'account' | storeId
   const [knowledge, setKnowledge] = useState('');
   const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api('/api/ai/config').then(d => setAutoReply(Boolean(d.autoReply))).catch(() => {});
+  }, []);
+
+  async function toggleAutoReply(v) {
+    setAutoReply(v);
+    try {
+      await api('/api/ai/config', { method: 'PUT', body: { autoReply: v } });
+      logOp(`AI auto-reply ${v ? 'enabled' : 'disabled'}`);
+      toast(v ? '🤖 AI auto-reply ON — BilisBot now answers new buyer messages' : 'AI auto-reply off — back to drafts only');
+    } catch {
+      setAutoReply(!v);
+      toast('Could not save — try again');
+    }
+  }
 
   // Each registered shop keeps its OWN knowledge pack; 'account' is the shared default.
   useEffect(() => {
@@ -57,8 +73,8 @@ export function AiHub({ openPage }) {
           </div>
 
           <div className="ai-trial-bar">
-            <span>AI suggested replies — the ✨ AI Draft button in Chats</span>
-            <Toggle checked={trial} onChange={v => { setTrial(v); toast(v ? 'AI suggested replies enabled' : 'AI suggested replies disabled'); }} />
+            <span>🤖 <b>AI auto-reply</b> — BilisBot answers every new buyer message on its own, following your catalog and rules</span>
+            <Toggle checked={autoReply} onChange={toggleAutoReply} />
           </div>
 
           <div className="home-card" style={{ marginTop: 18 }}>

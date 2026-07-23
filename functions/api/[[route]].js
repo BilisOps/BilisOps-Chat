@@ -544,6 +544,11 @@ async function ttSyncChats(env, sb, store) {
       if (added && last.direction === 'in') conv.unread = true;
     }
     await w(sb.from('conversations').upsert({ id: conv.id, seller_id: conv.sellerId, updated_at: conv.updatedAt, data: conv }));
+    // newly pulled buyer message → let BilisBot answer it if auto-reply is on
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    if (added && lastMsg && lastMsg.direction === 'in') {
+      await autoReplyIfEnabled(env, sb, store.sellerId, conv);
+    }
   }
 
   store.lastChatSyncAt = new Date().toISOString();
@@ -741,6 +746,9 @@ app.post('/api/platforms/:key/webhook', async (c) => {
     const store = await findStoreByShop(sb, key, msg.externalShopId);
     if (!store) return c.json({ error: 'no_store', message: `No connected ${key} shop` }, 404);
     const conv = await deliverBuyerMessage(sb, store, msg.buyerName, msg.text, msg.buyerExternalId);
+    // answer in the background so the platform gets a fast webhook ACK
+    const auto = autoReplyIfEnabled(c.env, sb, store.sellerId, conv);
+    if (c.executionCtx && c.executionCtx.waitUntil) c.executionCtx.waitUntil(auto); else await auto;
     return c.json({ ok: true, kind: 'message', mode: check.mode, conversationId: conv.id });
   }
   const evt = norm.order ? norm.order(body) : null;
@@ -883,7 +891,8 @@ app.post('/api/dev/simulate', async (c) => {
   if (!stores.length) return c.json({ error: 'no_stores', message: 'Authorize a store first' }, 400);
   const store = pick(stores);
   const conv = await deliverBuyerMessage(sb, store, pick(TEST_BUYERS), pick(TEST_QUESTIONS));
-  return c.json({ ok: true, platform: store.platform, conversationId: conv.id });
+  const auto = await autoReplyIfEnabled(c.env, sb, seller.id, conv);
+  return c.json({ ok: true, platform: store.platform, conversationId: conv.id, aiReplied: Boolean(auto) });
 });
 
 app.post('/api/dev/simulate-order', async (c) => {
@@ -1032,7 +1041,11 @@ function sanitizeRules(list) {
 
 app.get('/api/ai/config', (c) => {
   const seller = c.get('seller');
-  return c.json({ products: seller.aiProducts || [], rules: seller.aiRules || [] });
+  return c.json({
+    products: seller.aiProducts || [],
+    rules: seller.aiRules || [],
+    autoReply: Boolean(seller.aiAutoReply),
+  });
 });
 
 app.put('/api/ai/config', async (c) => {
@@ -1046,8 +1059,13 @@ app.put('/api/ai/config', async (c) => {
   const rules = sanitizeRules(body.rules);
   if (products) fresh.aiProducts = products;
   if (rules) fresh.aiRules = rules;
+  if ('autoReply' in body) fresh.aiAutoReply = Boolean(body.autoReply);
   await w(sb.from('sellers').update({ data: fresh }).eq('id', seller.id));
-  return c.json({ products: fresh.aiProducts || [], rules: fresh.aiRules || [] });
+  return c.json({
+    products: fresh.aiProducts || [],
+    rules: fresh.aiRules || [],
+    autoReply: Boolean(fresh.aiAutoReply),
+  });
 });
 
 const STOCK_LABEL = { in: 'in stock', low: 'low stock', out: 'OUT OF STOCK', preorder: 'pre-order' };
@@ -1088,23 +1106,15 @@ function templateDraft(t0) {
   return "Hi po! Thanks for reaching out — we'll get back to you with the details right away. Salamat! 😊";
 }
 
-app.post('/api/ai/draft', async (c) => {
-  const seller = c.get('seller'); const sb = c.get('sb');
-  const body = (await c.req.json().catch(() => ({}))) || {};
-  const { data: row } = await sb.from('conversations').select('data')
-    .eq('id', body.conversationId).eq('seller_id', seller.id).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
-  const conv = row.data;
+// Core engine: build the grounded prompt and generate one reply.
+// Used by the manual ✨ AI Draft button AND the auto-reply pipeline.
+async function generateAIReply(env, sb, seller, conv) {
   const lastIn = [...conv.messages].reverse().find((m) => m.direction === 'in');
-  if (!lastIn) return c.json({ error: 'no_buyer_message' }, 400);
-
-  const fallback = () => c.json({
-    draft: templateDraft(lastIn.text), engine: 'template',
-    note: 'Add DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) on the server to enable real AI replies.',
-  });
-  const hasDeepSeek = Boolean(c.env.DEEPSEEK_API_KEY);
-  const hasClaude = Boolean(c.env.ANTHROPIC_API_KEY);
-  if (!hasDeepSeek && !hasClaude) return fallback();
+  if (!lastIn) return null;
+  const fallback = { draft: templateDraft(lastIn.text), engine: 'template' };
+  const hasDeepSeek = Boolean(env.DEEPSEEK_API_KEY);
+  const hasClaude = Boolean(env.ANTHROPIC_API_KEY);
+  if (!hasDeepSeek && !hasClaude) return fallback;
 
   try {
     // Knowledge = this shop's own pack first, then account-wide facts.
@@ -1113,14 +1123,14 @@ app.post('/api/ai/draft', async (c) => {
     const convStore = str && str.data;
     const knowledge = [
       convStore && convStore.knowledge
-        ? `Shop-specific facts for "${convStore.name}" (${convStore.platform}):\n${convStore.knowledge}` : '',
+        ? `Shop-specific facts for "${convStore.nickname || convStore.name}" (${convStore.platform}):\n${convStore.knowledge}` : '',
       kr && kr.text ? `Account-wide facts (all shops):\n${kr.text}` : '',
     ].filter(Boolean).join('\n\n') || '(no knowledge pack yet)';
     const catalogSection = productCatalogPrompt(seller.aiProducts);
     const rulesSection = sellerRulesPrompt(seller.aiRules);
     const system = [
       'You are BilisBot, the customer-service assistant for a Philippine e-commerce seller using BilisOps Chat.',
-      "Draft ONE reply to the buyer's latest message. Match the buyer's language (English, Tagalog, or Taglish).",
+      'Draft ONE reply that answers the buyer\'s NEWEST message (the final user turn). Earlier messages are context only — do not re-answer them. Match the buyer\'s language (English, Tagalog, or Taglish).',
       'Be warm, concise (1-3 sentences), and helpful, like a friendly human seller. An emoji or two is fine.',
       ...(rulesSection ? [rulesSection] : []),
       ...(catalogSection ? [catalogSection] : []),
@@ -1136,50 +1146,180 @@ app.post('/api/ai/draft', async (c) => {
       history.push({ role: 'user', content: lastIn.text });
     }
 
-    // Engine 1: DeepSeek (OpenAI-compatible chat completions)
     if (hasDeepSeek) {
       try {
         const resp = await fetch('https://api.deepseek.com/chat/completions', {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${c.env.DEEPSEEK_API_KEY}`,
-          },
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${env.DEEPSEEK_API_KEY}` },
           body: JSON.stringify({
-            model: 'deepseek-chat',
-            max_tokens: 512,
-            temperature: 1.1,
+            model: 'deepseek-chat', max_tokens: 512, temperature: 1.1,
             messages: [{ role: 'system', content: system }, ...history],
           }),
         });
         const raw = await resp.text();
         let data = null; try { data = JSON.parse(raw); } catch { }
         const draft = data?.choices?.[0]?.message?.content?.trim();
-        if (draft) return c.json({ draft, engine: 'deepseek' });
+        if (draft) return { draft, engine: 'deepseek' };
         console.log('deepseek draft failed —', `HTTP ${resp.status}: ${raw.slice(0, 200)}`);
       } catch (e) {
         console.log('deepseek draft failed —', String(e && e.message || e));
       }
-      if (!hasClaude) return fallback();
+      if (!hasClaude) return fallback;
     }
 
-    // Engine 2: Claude
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-api-key': c.env.ANTHROPIC_API_KEY,
+        'x-api-key': env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 1024, system, messages: history }),
     });
     const data = await resp.json();
     const draft = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    if (!draft) return fallback();
-    return c.json({ draft, engine: 'claude' });
+    return draft ? { draft, engine: 'claude' } : fallback;
   } catch (err) {
-    return fallback();
+    return fallback;
   }
+}
+
+app.post('/api/ai/draft', async (c) => {
+  const seller = c.get('seller'); const sb = c.get('sb');
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  const { data: row } = await sb.from('conversations').select('data')
+    .eq('id', body.conversationId).eq('seller_id', seller.id).maybeSingle();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const conv = row.data;
+  const res = await generateAIReply(c.env, sb, seller, conv);
+  if (!res) return c.json({ error: 'no_buyer_message' }, 400);
+  if (res.engine === 'template') {
+    res.note = 'Add DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) on the server to enable real AI replies.';
+  }
+  return c.json(res);
+});
+
+// Auto-reply: when the seller turns it on, BilisBot answers each new buyer
+// message on its own (same catalog/rules/knowledge grounding), and pushes the
+// reply out to the platform for live conversations.
+async function autoReplyIfEnabled(env, sb, sellerId, conv) {
+  try {
+    const { data: sr } = await sb.from('sellers').select('data').eq('id', sellerId).maybeSingle();
+    const seller = sr && sr.data;
+    if (!seller || !seller.aiAutoReply) return null;
+    const last = conv.messages[conv.messages.length - 1];
+    if (!last || last.direction !== 'in') return null;
+    const res = await generateAIReply(env, sb, seller, conv);
+    if (!res || !res.draft) return null;
+    const now = new Date().toISOString();
+    conv.messages.push({ direction: 'out', text: res.draft, at: now, ai: true, engine: res.engine });
+    conv.preview = res.draft;
+    conv.updatedAt = now;
+    conv.unread = false; // answered by the AI
+    await w(sb.from('conversations').upsert({ id: conv.id, seller_id: conv.sellerId, updated_at: now, data: conv }));
+    // deliver outbound for real platform conversations
+    if (conv.platform === 'tiktok' && !conv.test && env.TIKTOK_APP_KEY && env.TIKTOK_APP_SECRET) {
+      const { data: st } = await sb.from('stores').select('data').eq('id', conv.storeId).maybeSingle();
+      const store = st && st.data;
+      if (store && store.tokens && store.tokens.access_token) {
+        await ttSendMessage(env, sb, store, conv, res.draft).catch((e) => {
+          conv.lastSendError = String(e && e.message || e).slice(0, 300);
+          return sb.from('conversations').update({ data: conv }).eq('id', conv.id);
+        });
+      }
+    }
+    return res;
+  } catch (e) {
+    console.log('auto-reply failed —', String(e && e.message || e));
+    return null;
+  }
+}
+
+// ---------- Chat insights: classify every buyer message for the dashboard ----------
+const MSG_CATEGORIES = [
+  { key: 'complaint', label: 'Complaints',
+    re: /(refund|return|broken|damaged|defect|wrong item|late|hindi (pa )?dumating|sira|reklamo|complain|cancel|scam|palpak)/i },
+  { key: 'assistance', label: 'Assistance',
+    re: /(address|palit|change|paano|how do|how to|help|tulong|update|resched|account)/i },
+  { key: 'price', label: 'Price & discounts',
+    re: /(price|magkano|discount|bulk|wholesale|promo|tawad|less|sale)/i },
+  { key: 'shipping', label: 'Orders & shipping',
+    re: /(ship|deliver|arrive|order|track|padala|dating|courier|lalamove|j&t|cod)/i },
+  { key: 'inquiry', label: 'Product inquiries',
+    re: /(available|stock|size|color|meron|variant|restock|item|product|bili)/i },
+];
+function classifyMessage(text) {
+  for (const cat of MSG_CATEGORIES) if (cat.re.test(text)) return cat.key;
+  return 'other';
+}
+
+app.get('/api/chat-insights', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const days = Math.min(90, Math.max(1, Number(c.req.query('days')) || 30));
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const { data } = await sb.from('conversations').select('data').eq('seller_id', seller.id);
+  const convs = (data || []).map((r) => r.data);
+
+  const counts = { complaint: 0, assistance: 0, price: 0, shipping: 0, inquiry: 0, other: 0 };
+  const examples = { complaint: [], assistance: [], price: [], shipping: [], inquiry: [], other: [] };
+  let totalIn = 0, totalOut = 0, aiOut = 0;
+  for (const conv of convs) {
+    for (const m of conv.messages) {
+      if (m.at < cutoff) continue;
+      if (m.direction === 'out') { totalOut++; if (m.ai) aiOut++; continue; }
+      totalIn++;
+      const cat = classifyMessage(m.text);
+      counts[cat]++;
+      examples[cat].push({ buyerName: conv.buyerName, text: m.text.slice(0, 120), platform: conv.platform, storeId: conv.storeId, at: m.at });
+    }
+  }
+  for (const k of Object.keys(examples)) {
+    examples[k] = examples[k].sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 4);
+  }
+  return c.json({
+    days,
+    totals: { messagesIn: totalIn, messagesOut: totalOut, aiReplies: aiOut, conversations: convs.length },
+    categories: MSG_CATEGORIES.map((cat) => ({ key: cat.key, label: cat.label, count: counts[cat.key], examples: examples[cat.key] }))
+      .concat([{ key: 'other', label: 'Others', count: counts.other, examples: examples.other }]),
+  });
+});
+
+// AI digest of recent buyer messages (on demand from the dashboard).
+app.post('/api/ai/chat-summary', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  if (!c.env.DEEPSEEK_API_KEY) {
+    return c.json({ summary: 'AI summary needs the AI engine configured on the server.', engine: 'template' });
+  }
+  const { data } = await sb.from('conversations').select('data').eq('seller_id', seller.id);
+  const msgs = [];
+  for (const r of data || []) {
+    const conv = r.data;
+    for (const m of conv.messages) {
+      if (m.direction === 'in') msgs.push({ at: m.at, buyer: conv.buyerName, text: m.text });
+    }
+  }
+  msgs.sort((a, b) => (a.at < b.at ? 1 : -1));
+  const recent = msgs.slice(0, 80).map((m) => `- ${m.buyer}: ${m.text.slice(0, 140)}`).join('\n');
+  if (!recent) return c.json({ summary: 'No buyer messages yet — the summary will appear once chats come in.', engine: 'none' });
+  try {
+    const resp = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${c.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat', max_tokens: 400, temperature: 0.7,
+        messages: [
+          { role: 'system', content: 'You are BilisBot, summarizing buyer chats for a Philippine e-commerce seller. Write a short digest in English: 3-5 bullet points covering the main themes (inquiries, complaints, assistance requests), anything urgent, and one suggested action. Be concrete and brief. Output only the bullets.' },
+          { role: 'user', content: `Recent buyer messages (newest first):\n${recent}` },
+        ],
+      }),
+    });
+    const d = await resp.json().catch(() => null);
+    const summary = d?.choices?.[0]?.message?.content?.trim();
+    if (summary) return c.json({ summary, engine: 'deepseek' });
+  } catch { }
+  return c.json({ summary: 'Could not generate the summary right now — try again in a moment.', engine: 'error' });
 });
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));

@@ -20,7 +20,9 @@ export const PLATFORM_SERVER_KEYS = { Shopee: 'shopee', Lazada: 'lazada', TikTok
 
 export const RAIL_TOP = [
   { id: 'home', icon: 'ti-home', title: 'Home', page: 'home' },
-  { id: 'chats', icon: 'ti-message-circle', title: 'Chats', page: 'chats', badge: true },
+  { id: 'chats', icon: 'ti-message-circle', title: 'Chats', badge: true, menu: [
+    { label: 'Chats', items: [['chats', 'Inbox'], ['chat-dashboard', 'Chat Dashboard']] },
+  ]},
   { id: 'tickets', icon: 'ti-ticket', title: 'Ticket Center', page: 'tickets' },
   { id: 'ai', icon: 'ti-robot', title: 'AI', menu: [
     { label: 'Data', items: [['ai-monitor', 'AI Chatbot Monitor'], ['ai-reception', 'Auto Reception']] },

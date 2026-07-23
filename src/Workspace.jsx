@@ -3,6 +3,7 @@ import { useApp } from './state.jsx';
 import { RAIL_TOP, RAIL_BOTTOM } from './data.js';
 import Home from './pages/Home.jsx';
 import Chats from './pages/Chats.jsx';
+import ChatDashboard from './pages/ChatDashboard.jsx';
 import Tickets from './pages/Tickets.jsx';
 import Plans from './pages/Plans.jsx';
 import { AiHub, AiMonitor, TogglesPage, AiRulesPage, AiProducts, AiServerRules, RECEPTION_ITEMS, HANDOVER_ITEMS } from './pages/Ai.jsx';
@@ -13,6 +14,7 @@ import { StoreAuth, AgentsPage, Sensitive, SystemSettings, OpRecord, Privacy } f
 const PAGES = {
   home: { title: 'Home', rail: 'home', render: (p) => <Home {...p} /> },
   chats: { title: 'Chats', rail: 'chats', render: () => <Chats /> },
+  'chat-dashboard': { title: 'Chat Dashboard', rail: 'chats', render: () => <ChatDashboard /> },
   tickets: { title: 'Ticket Center', rail: 'tickets', render: () => <Tickets /> },
   'ai-hub': { title: 'AI Chatbot', rail: 'ai', render: (p) => <AiHub {...p} /> },
   'ai-monitor': { title: 'AI Chatbot Monitor', rail: 'ai', render: () => <AiMonitor /> },
