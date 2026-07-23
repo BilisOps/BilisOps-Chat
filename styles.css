@@ -1030,6 +1030,22 @@ a { color: inherit; }
   letter-spacing: 0.02em;
 }
 
+/* who answered last — small note on each conversation row */
+.reply-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 1.5px 7px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.reply-chip.ai { background: #ffedd5; color: #c2410c; }
+.reply-chip.human { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+.reply-chip.waiting { background: #fef3c7; color: #b45309; }
+
 /* Chat Dashboard — message categories */
 .cat-grid {
   display: grid;

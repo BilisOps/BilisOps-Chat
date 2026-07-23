@@ -165,6 +165,16 @@ export default function Chats() {
                     <span className="conv-time">{c.time}</span>
                   </div>
                   <div className="conv-preview">{c.preview}</div>
+                  {(() => {
+                    const last = c.messages[c.messages.length - 1];
+                    if (!last) return null;
+                    if (last.direction === 'out') {
+                      return last.ai
+                        ? <span className="reply-chip ai">🤖 AI replied</span>
+                        : <span className="reply-chip human">👤 Human replied</span>;
+                    }
+                    return <span className="reply-chip waiting">⏳ Awaiting reply</span>;
+                  })()}
                 </div>
                 {c.unread && <span className="unread-dot" />}
               </div>
