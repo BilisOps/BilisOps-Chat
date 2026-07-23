@@ -1,0 +1,46 @@
+STEP-BY-STEP INSTRUCTIONS FOR PRODUCT TESTING
+(paste into the "Step-by-step Instructions For Product Testing" field)
+
+1. Log in to https://chat.bilisops.com with the test account:
+   Email: tester@bilisops.com
+   Password: admin123
+
+2. STORE CONNECTION — Open Settings > Store Authorization. The TikTok sandbox
+   shop (SANDBOX7657414262957000468) is already connected through the official
+   TikTok Shop authorization flow. To see the authorization flow itself, select
+   "TikTok" and click "Connect TikTok store" — the seller is redirected to the
+   TikTok authorization page; after approval they are redirected back and the
+   shop appears in the table. Any number of shops can be connected.
+
+3. UNIFIED CHAT INBOX — Open Chats (bottom navigation). Buyer conversations
+   from the connected TikTok shop appear in one inbox (webhook push, plus an
+   automatic API pull sync every minute). Click the "🧪 Test message" button to
+   generate a sample buyer message if the inbox is empty.
+
+4. REPLY TO A BUYER — Open any conversation, type a reply in the composer and
+   click Send. Replies to TikTok conversations are delivered to the buyer
+   through the TikTok Shop customer service (send message) API.
+
+5. AI-ASSISTED DRAFT — Open a conversation and click "✨ AI Draft". The app
+   drafts a suggested reply grounded in the seller's Product Catalog, Reply
+   Rules, and Knowledge Pack. The agent reviews/edits the draft before Send —
+   the AI never sends on its own.
+
+6. AI CONTROLS — Open AI (bottom navigation):
+   • Product Catalog — the products the AI is allowed to talk about (price,
+     variants, stock, promos). Try "+ Add product".
+   • AI Reply Rules — seller-written rules the AI must follow (e.g. "no
+     discounts beyond listed promos"). Try adding/toggling a rule.
+   • AI Chatbot — per-shop Knowledge Pack (shipping, returns, policies), with
+     a scope selector for account-wide vs. per-shop facts.
+
+7. ANALYTICS — Open Analytics > Sales Conversion to see response rate,
+   first-response time, and conversation-to-order metrics computed from the
+   inbox and order events.
+
+Technical notes for reviewers:
+• Webhook endpoint (message push): https://chat.bilisops.com/api/platforms/tiktok/webhook
+  (signature verified with app secret: HMAC-SHA256 over app_key + body)
+• OAuth callback: https://chat.bilisops.com/api/platforms/tiktok/oauth/callback
+• API scopes used: shop authorized information (shop cipher) and customer
+  service conversations/messages (read + send).

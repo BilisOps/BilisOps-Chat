@@ -1,0 +1,23 @@
+BRIEF LIST OF PRODUCT FEATURES
+(paste into the "Brief List Of Product Features" field — matches screenshots 01-08)
+
+Store Connection:
+1. Official TikTok Shop OAuth authorization (multi-shop — a seller can connect any number of shops).
+2. Automatic shop identification (shop cipher) after authorization; revoke anytime.
+
+Customer Service (Chat):
+1. Unified chat inbox — TikTok Shop buyer conversations sync into one workspace (webhook push + automatic API pull every minute).
+2. Reply to buyers — agent replies are delivered through the TikTok Shop customer service send-message API.
+3. AI-assisted reply drafts — one-click suggested reply grounded in the seller's product catalog, reply rules, and knowledge pack; a human agent always reviews before sending.
+4. Conversation management — unread/resolve states, buyer profile panel with order context, sensitive-word filter on outgoing replies.
+
+AI Controls (seller-configurable):
+1. Product Catalog — products the AI may reference (price, variants, stock status, promos); out-of-stock items trigger in-stock alternatives.
+2. AI Reply Rules — seller-written rules enforced on every draft (e.g., polite po/opo forms, no discounts beyond listed promos).
+3. Knowledge Pack — per-shop store facts (shipping, returns, policies) with account-wide fallback.
+
+Analytics:
+1. Response rate, average first-response time, resolution rate.
+2. Conversation-to-order conversion and guided sales from order events.
+
+Service Scope: TikTok Shop sellers in the Philippines and Southeast Asia (English / Tagalog / Taglish support).
