@@ -55,6 +55,19 @@ export function StoreAuth() {
     toast(`${store.name} removed`);
   }
 
+  // Re-run the platform authorization for this exact shop (refreshes the
+  // token and extends the authorization window by a year).
+  async function reauthorize(store) {
+    try {
+      const { url } = await api(`/api/connect/${store.key}/start?shopId=${encodeURIComponent(store.externalId || '')}&shopName=${encodeURIComponent(store.name)}`);
+      logOp(`Re-authorizing ${store.platform} store "${store.nickname || store.name}"`);
+      toast(`Re-authorizing ${store.platform}…`);
+      window.location.href = url;
+    } catch {
+      toast('Could not start re-authorization — try again');
+    }
+  }
+
   async function rename(store, nickname) {
     try {
       await api(`/api/stores/${store.id}`, { method: 'PUT', body: { nickname } });
@@ -77,7 +90,7 @@ export function StoreAuth() {
       <td><StatusPill ok>Authorized</StatusPill></td>
       <td style={{ whiteSpace: 'nowrap' }}>
         <button className="btn-sm" onClick={() => setRenaming(s)}>Rename</button>{' '}
-        <button className="btn-sm" onClick={() => toast('Authorization refreshed for another year ✓')}>Reauthorize</button>{' '}
+        <button className="btn-sm" onClick={() => reauthorize(s)}>Reauthorize</button>{' '}
         <button className="btn-sm danger" onClick={() => remove(s)}>Remove</button>
       </td>
     </tr>
@@ -168,9 +181,21 @@ export function AgentsPage() {
           }}
         />
       )}
-      <DataTable columns={['Name', 'Email', 'Role', 'Status']}
+      <DataTable columns={['Name', 'Email', 'Role', 'Status', 'Actions']}
         rows={agents.map((a, i) => (
-          <tr key={i}><td><b>{a.name}</b></td><td>{a.email}</td><td>{a.role}</td><td><StatusPill ok>Active</StatusPill></td></tr>
+          <tr key={i}>
+            <td><b>{a.name}</b></td><td>{a.email}</td><td>{a.role}</td>
+            <td><StatusPill ok>Active</StatusPill></td>
+            <td>
+              {a.role === 'Owner'
+                ? <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>—</span>
+                : <button className="btn-sm danger" onClick={() => {
+                    setAgents(prev => prev.filter((_, j) => j !== i));
+                    logOp(`Removed agent ${a.name}`);
+                    toast(`${a.name} removed from the team`);
+                  }}>Remove</button>}
+            </td>
+          </tr>
         ))}
         empty="" />
     </PagePad>

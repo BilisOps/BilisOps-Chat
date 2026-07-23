@@ -75,6 +75,7 @@ export function AppProvider({ children, onLogout }) {
     const list = await api('/api/stores');
     setStores(list.map(s => ({
       id: s.id, platform: s.platform, key: s.key, name: s.name, nickname: s.nickname || null, site: s.site,
+      externalId: s.externalId || null,
       time: new Date(s.authorizedAt).toLocaleString(),
       expiry: new Date(s.expiresAt).toLocaleDateString(),
     })));

@@ -336,9 +336,12 @@ app.get('/api/connect/:key/start', async (c) => {
   const redirect = `${origin}/api/platforms/${key}/oauth/callback`;
   const state = await signState(c.env.SUPABASE_SERVICE_KEY, { sid: seller.id, key, iat: Date.now() });
   const live = meta.envVars.every((v) => Boolean(c.env[v]));
+  // re-authorizing an existing shop: pre-fill the demo consent with its identity
+  const reShop = c.req.query('shopId') ? `&shop_id=${encodeURIComponent(c.req.query('shopId'))}` : '';
+  const reName = c.req.query('shopName') ? `&shop_name=${encodeURIComponent(c.req.query('shopName'))}` : '';
   const url = live
     ? liveAuthorizeUrl(key, c.env, redirect, state)
-    : `${origin}/api/platforms/${key}/oauth/mock?state=${encodeURIComponent(state)}`;
+    : `${origin}/api/platforms/${key}/oauth/mock?state=${encodeURIComponent(state)}${reShop}${reName}`;
   return c.json({ url, mode: live ? 'live' : 'demo', platform: UI_NAME[key] || meta.name });
 });
 
@@ -349,21 +352,25 @@ app.get('/api/platforms/:key/oauth/mock', (c) => {
   if (!meta) return c.text('Unknown platform', 404);
   const state = c.req.query('state') || '';
   const name = UI_NAME[key] || meta.name;
+  const esc = (s) => String(s || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  // re-authorization pre-fills the existing shop's identity so it refreshes it
+  const reShopId = esc(c.req.query('shop_id'));
+  const reShopName = esc(c.req.query('shop_name'));
   const action = `${new URL(c.req.url).origin}/api/platforms/${key}/oauth/callback`;
   return c.html(consentPage(`Authorize ${name}`, `
     <div class="b">⚡</div>
-    <h2>Authorize BilisOps Chat<span class="pill">DEMO</span></h2>
+    <h2>${reShopId ? 'Re-authorize' : 'Authorize'} BilisOps Chat<span class="pill">DEMO</span></h2>
     <p><b>BilisOps Chat</b> is requesting permission to manage buyer messages for your <b>${name}</b> shop.</p>
     <p>In live mode, ${name} shows its own login &amp; consent screen here.</p>
     <form method="GET" action="${action}">
       <input type="hidden" name="state" value="${state}">
       <input type="hidden" name="demo" value="1">
-      <input type="hidden" name="shop_id" value="demo-${randHex(4)}">
-      <label>Name this shop</label>
-      <input name="shop_name" placeholder="e.g. ${name} Main Store" required autofocus>
-      <button class="btn" type="submit">Authorize &amp; connect</button>
+      <input type="hidden" name="shop_id" value="${reShopId || `demo-${randHex(4)}`}">
+      <label>${reShopId ? 'Shop' : 'Name this shop'}</label>
+      <input name="shop_name" placeholder="e.g. ${name} Main Store" required ${reShopName ? `value="${reShopName}"` : 'autofocus'}>
+      <button class="btn" type="submit">${reShopId ? 'Re-authorize' : 'Authorize &amp; connect'}</button>
     </form>
-    <div class="muted">Connecting several ${name} shops? Repeat this for each one.</div>
+    <div class="muted">${reShopId ? 'Confirms access for another year.' : `Connecting several ${name} shops? Repeat this for each one.`}</div>
   `));
 });
 
@@ -414,7 +421,12 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
   let store = (rows || []).map((r) => r.data).find((s) => s.key === key && s.externalId === shopId);
   const now = new Date().toISOString();
   if (store) {
-    store.name = shopName; store.authorizedAt = now; if (tokens) store.tokens = tokens;
+    // refresh: new authorization window, keep the record (and its nickname)
+    store.name = shopName;
+    store.authorizedAt = now;
+    const ex = new Date(); ex.setFullYear(ex.getFullYear() + 1);
+    store.expiresAt = ex.toISOString();
+    if (tokens) store.tokens = tokens;
   } else {
     const expires = new Date(); expires.setFullYear(expires.getFullYear() + 1);
     store = {
