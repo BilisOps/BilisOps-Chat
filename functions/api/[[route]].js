@@ -867,9 +867,31 @@ async function deliverOrderEvent(sb, store, evt) {
       orderRef: evt.orderRef, status: evt.status, amount: evt.amount, at: evt.at,
     };
   }
+  // buyer linkage + rich detail, whenever the source provides them
+  for (const k of ['buyerName', 'buyerExternalId', 'conversationId', 'items', 'paymentMethod', 'courier', 'trackingNo']) {
+    if (evt[k] != null) order[k] = evt[k];
+  }
   await w(sb.from('orders').upsert({ id: order.id, seller_id: order.sellerId, data: order }));
   return order;
 }
+
+// Orders belonging to one conversation's buyer (current + previous).
+app.get('/api/conversations/:id/orders', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const { data: cr } = await sb.from('conversations').select('data')
+    .eq('id', c.req.param('id')).eq('seller_id', seller.id).maybeSingle();
+  if (!cr) return c.json({ error: 'not_found' }, 404);
+  const conv = cr.data;
+  const { data: or } = await sb.from('orders').select('data').eq('seller_id', seller.id);
+  const orders = (or || []).map((r) => r.data).filter((o) =>
+    o.conversationId === conv.id ||
+    (o.buyerExternalId && conv.buyerExternalId && o.buyerExternalId === conv.buyerExternalId) ||
+    (o.buyerName && o.buyerName === conv.buyerName && o.storeId === conv.storeId))
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
+    .map(({ sellerId, ...pub }) => pub);
+  return c.json(orders);
+});
 
 // ---------- dev simulators ----------
 const TEST_STATUSES = ['UNPAID', 'TO_SHIP', 'SHIPPED', 'COMPLETED', 'CANCELLED'];
@@ -899,14 +921,40 @@ app.post('/api/dev/simulate-order', async (c) => {
   const seller = c.get('seller'); const sb = c.get('sb');
   const stores = await sellerStores(sb, seller.id);
   if (!stores.length) return c.json({ error: 'no_stores', message: 'Authorize a store first' }, 400);
-  const store = pick(stores);
+  // attach the order to an existing conversation's buyer when one exists,
+  // so the buyer panel shows real current + previous orders
+  const { data: cr } = await sb.from('conversations').select('data').eq('seller_id', seller.id);
+  const convs = (cr || []).map((r) => r.data);
+  const conv = convs.length ? pick(convs) : null;
+  const store = conv ? stores.find((s) => s.id === conv.storeId) || pick(stores) : pick(stores);
+
+  // line items from the seller's product catalog when available
+  const catalog = (seller.aiProducts || []).filter((p) => p.active);
+  let items = null, amount;
+  if (catalog.length) {
+    const prod = pick(catalog);
+    const qty = 1 + Math.floor(Math.random() * 3);
+    // first number in the price string, e.g. "₱299 each, 3 for ₱799" → 299
+    const m = String(prod.price || '').match(/(\d[\d,]*)(\.\d+)?/);
+    const unit = m ? Number(m[0].replace(/,/g, '')) : (99 + Math.floor(Math.random() * 500));
+    items = [{ name: prod.name, qty, price: unit }];
+    amount = Math.round(unit * qty * 100) / 100;
+  } else {
+    amount = Math.round((99 + Math.random() * 1900) * 100) / 100;
+  }
+
   const order = await deliverOrderEvent(sb, store, {
     orderRef: `TEST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
     status: pick(TEST_STATUSES),
-    amount: Math.round((99 + Math.random() * 1900) * 100) / 100,
+    amount,
     at: new Date().toISOString(),
+    ...(conv ? { buyerName: conv.buyerName, buyerExternalId: conv.buyerExternalId || undefined, conversationId: conv.id } : {}),
+    ...(items ? { items } : {}),
+    paymentMethod: pick(['Cash on Delivery', 'GCash', 'Card']),
+    courier: pick(['J&T Express', 'SPX Express', 'Flash Express']),
+    trackingNo: `PH${Math.random().toString().slice(2, 12)}Q`,
   });
-  return c.json({ ok: true, platform: store.platform, orderRef: order.orderRef, status: order.status, amount: order.amount });
+  return c.json({ ok: true, platform: store.platform, orderRef: order.orderRef, status: order.status, amount: order.amount, buyer: order.buyerName || null });
 });
 
 // ---------- conversations ----------

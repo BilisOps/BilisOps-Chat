@@ -1046,6 +1046,53 @@ a { color: inherit; }
 .reply-chip.human { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
 .reply-chip.waiting { background: #fef3c7; color: #b45309; }
 
+/* buyer panel — current + previous orders */
+.order-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.order-card .info-row { gap: 10px; }
+.order-card .info-row > :last-child { text-align: right; word-break: break-all; }
+.ord-top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.ord-status {
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.ord-status.good { background: #dcfce7; color: #15803d; }
+.ord-status.bad { background: #fee2e2; color: #b91c1c; }
+.ord-status.mid { background: #ffedd5; color: #c2410c; }
+.ord-status.sm { padding: 1px 6px; font-size: 9px; }
+.ord-ref { font-size: 11.5px; font-weight: 700; cursor: pointer; color: var(--text); }
+.ord-ref:hover { color: var(--brand); }
+.ord-date { font-size: 10.5px; color: var(--muted); margin-bottom: 7px; }
+.ord-item {
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  padding: 5px 0;
+  border-top: 1px dashed var(--border);
+  align-items: baseline;
+}
+.ord-item-name { flex: 1; font-weight: 600; }
+.ord-item-qty { color: var(--muted); }
+.ord-item-price { font-weight: 600; }
+.ord-prev {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+}
+.ord-prev:last-child { border-bottom: 0; }
+.ord-prev-ref { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ord-prev-amt { color: var(--muted); font-weight: 600; }
+
 /* AI add-on upsell bits */
 .pro-pill {
   display: inline-block;

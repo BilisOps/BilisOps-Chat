@@ -24,9 +24,17 @@ export default function Chats() {
   const [drafting, setDrafting] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [agents] = useLocal('agents', []);
+  const [buyerOrders, setBuyerOrders] = useState([]);
   const bodyRef = useRef(null);
 
   const selected = conversations.find(c => c.id === selectedId) || null;
+
+  // the buyer's orders (current + previous) for the info panel
+  useEffect(() => {
+    setBuyerOrders([]);
+    if (!selectedId) return;
+    api(`/api/conversations/${selectedId}/orders`).then(setBuyerOrders).catch(() => {});
+  }, [selectedId]);
 
   const filtered = conversations.filter(c => {
     if (storeFilter !== 'all' && c.storeId !== storeFilter) return false;
@@ -271,17 +279,72 @@ export default function Chats() {
         <div className="info-section">
           <h4>Buyer Stats</h4>
           <div className="stat-grid">
-            <div className="stat-box"><div className="num">{selected ? 1 : 0}</div><div className="lbl">Orders</div></div>
-            <div className="stat-box"><div className="num">—</div><div className="lbl">Rating</div></div>
+            <div className="stat-box"><div className="num">{buyerOrders.length}</div><div className="lbl">Orders</div></div>
+            <div className="stat-box">
+              <div className="num">{buyerOrders.length ? `₱${buyerOrders.reduce((s, o) => s + (o.amount || 0), 0).toLocaleString()}` : '—'}</div>
+              <div className="lbl">Total spent</div>
+            </div>
           </div>
         </div>
-        <div className="info-section">
-          <h4>Order Details</h4>
-          <div className="info-row"><span>Order ID</span><span>—</span></div>
-          <div className="info-row"><span>Status</span><span>—</span></div>
-          <div className="info-row"><span>Amount</span><span>—</span></div>
-          <div className="info-row"><span>Tracking</span><span>—</span></div>
-        </div>
+        {(() => {
+          if (!selected) return (
+            <div className="info-section"><h4>Orders</h4>
+              <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>Select a conversation.</div></div>
+          );
+          if (!buyerOrders.length) return (
+            <div className="info-section"><h4>Orders</h4>
+              <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>No orders from this buyer yet.</div></div>
+          );
+          const [cur, ...prev] = buyerOrders;
+          const cls = (s) => /COMPLET|DELIVER/i.test(s) ? 'good' : /CANCEL/i.test(s) ? 'bad' : 'mid';
+          return (
+            <>
+              <div className="info-section">
+                <h4>Current Order</h4>
+                <div className="order-card">
+                  <div className="ord-top">
+                    <span className={`ord-status ${cls(cur.status)}`}>{cur.status}</span>
+                    <span className="ord-ref" title="Click to copy"
+                      onClick={() => { navigator.clipboard?.writeText(cur.orderRef); toast('Order ref copied'); }}>
+                      {cur.orderRef}
+                    </span>
+                  </div>
+                  <div className="ord-date">{new Date(cur.at).toLocaleString()}</div>
+                  {(cur.items || []).map((it, i) => (
+                    <div className="ord-item" key={i}>
+                      <span className="ord-item-name">{it.name}</span>
+                      <span className="ord-item-qty">×{it.qty}</span>
+                      <span className="ord-item-price">₱{Number(it.price).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  <div className="info-row"><span>Amount</span><b>₱{Number(cur.amount || 0).toLocaleString()}</b></div>
+                  {cur.paymentMethod && <div className="info-row"><span>Payment</span><span>{cur.paymentMethod}</span></div>}
+                  {cur.courier && <div className="info-row"><span>Courier</span><span>{cur.courier}</span></div>}
+                  {cur.trackingNo && (
+                    <div className="info-row"><span>Tracking</span>
+                      <span className="ord-ref" title="Click to copy"
+                        onClick={() => { navigator.clipboard?.writeText(cur.trackingNo); toast('Tracking number copied'); }}>
+                        {cur.trackingNo}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {prev.length > 0 && (
+                <div className="info-section">
+                  <h4>Previous Orders ({prev.length})</h4>
+                  {prev.map(o => (
+                    <div className="ord-prev" key={o.id}>
+                      <span className={`ord-status sm ${cls(o.status)}`}>{o.status}</span>
+                      <span className="ord-prev-ref">{o.orderRef}</span>
+                      <span className="ord-prev-amt">₱{Number(o.amount || 0).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
         <div className="info-section">
           <h4>Tags</h4>
           <div className="tag-list">
