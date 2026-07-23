@@ -374,6 +374,29 @@ app.get('/api/platforms/:key/oauth/mock', (c) => {
   `));
 });
 
+// Lazada: exchange the authorization code for tokens.
+// Signing: HMAC-SHA256(secret, path + sorted(key+value)) → UPPERCASE hex.
+async function exchangeLazada(env, code) {
+  const path = '/auth/token/create';
+  const params = { app_key: env.LAZADA_APP_KEY, code, sign_method: 'sha256', timestamp: String(Date.now()) };
+  const base = path + Object.keys(params).sort().map((k) => k + params[k]).join('');
+  const sign = (await hmacHex(env.LAZADA_APP_SECRET, base)).toUpperCase();
+  const qs = new URLSearchParams({ ...params, sign }).toString();
+  const d = await fetch(`https://auth.lazada.com/rest${path}?${qs}`).then((r) => r.json()).catch(() => null);
+  if (d && d.access_token) {
+    const info = (d.country_user_info && d.country_user_info[0]) || {};
+    return {
+      shopName: d.account
+        ? `Lazada${info.country ? ' ' + String(info.country).toUpperCase() : ''} — ${d.account}`.slice(0, 80)
+        : 'Lazada Shop',
+      shopId: String(info.seller_id || info.user_id || d.account || randHex(6)),
+      tokens: { access_token: d.access_token, refresh_token: d.refresh_token, expiresIn: d.expires_in },
+    };
+  }
+  console.log('lazada token exchange failed —', JSON.stringify(d || {}).slice(0, 300));
+  return null;
+}
+
 async function exchangeTikTok(env, code) {
   const url = 'https://auth.tiktok-shops.com/api/v2/token/get'
     + `?app_key=${encodeURIComponent(env.TIKTOK_APP_KEY)}&app_secret=${encodeURIComponent(env.TIKTOK_APP_SECRET)}`
@@ -409,7 +432,8 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
   if (live && !q.demo) {
     let res = null;
     if (key === 'tiktok' && code) res = await exchangeTikTok(c.env, code).catch(() => null);
-    // Shopee / Lazada / Meta token exchange slot in here as each goes live.
+    else if (key === 'lazada' && code) res = await exchangeLazada(c.env, code).catch(() => null);
+    // Shopee / Meta token exchange slot in here as each goes live.
     if (res) { shopName = res.shopName; shopId = res.shopId; tokens = res.tokens; }
     else { shopName = `${UI_NAME[key]} Shop`; shopId = String(q.shop_id || q.shop_cipher || randHex(6)); }
   } else {
