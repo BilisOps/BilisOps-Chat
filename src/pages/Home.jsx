@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { api } from '../api.js';
-import { PagePad, SplitCard } from '../components.jsx';
+import { PagePad, SplitCard, StoreFilter } from '../components.jsx';
 import { PlatformLogo } from '../brand.jsx';
 
 export default function Home({ openPage }) {
@@ -100,6 +100,7 @@ export default function Home({ openPage }) {
           <h3>Conversation Overview</h3>
           <span className="home-card-note">
             Last 90 days · who handled it: 🤖 AI, 👤 Agents, or 🤝 Joint
+            <StoreFilter />
             <button className="btn-sm" style={{ fontSize: 11 }} onClick={() => openPage('salesconv')}>Full report →</button>
           </span>
         </div>

@@ -1046,6 +1046,41 @@ a { color: inherit; }
 .reply-chip.human { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
 .reply-chip.waiting { background: #fef3c7; color: #b45309; }
 
+/* ---------- StoreFilter — multi-select store scope ---------- */
+.storefilter { position: relative; display: inline-block; }
+.storefilter .btn-sm.active { border-color: var(--brand); color: var(--brand); font-weight: 700; }
+.sf-caret { font-size: 9px; margin-left: 4px; opacity: 0.7; }
+.sf-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  min-width: 230px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.10);
+  padding: 6px;
+}
+.sf-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sf-item:hover { background: var(--panel-2); }
+.sf-item.checked { color: var(--brand); }
+.sf-ic { width: 18px; display: flex; justify-content: center; }
+.sf-ic i { font-size: 14px; color: var(--muted); }
+.sf-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-check { color: var(--brand); font-weight: 800; }
+.sf-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+.sf-empty, .sf-hint { font-size: 11px; color: var(--muted); padding: 7px 10px; }
+
 /* ---------- Sales Conversion: funnel + handler-split cards ---------- */
 .funnel-wrap {
   display: grid;

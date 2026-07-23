@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { downloadFile } from '../api.js';
-import { PagePad, PageTitle, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily, SplitCard } from '../components.jsx';
+import { PagePad, PageTitle, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily, SplitCard, StoreFilter } from '../components.jsx';
 import { PlatformLogo } from '../brand.jsx';
 
 const fmt = v => (v === null || v === undefined ? '—' : v);
@@ -22,6 +22,7 @@ export function SalesConv() {
     <PagePad wide>
       <PageTitle title="Sales Conversion" sub="From first question to paid order — and who did the guiding: your AI, your agents, or both." />
       <div className="toolbar-row">
+        <StoreFilter />
         <RangeChips options={['Day', 'Week', 'Month']} active={range} onChange={setRange} />
         <div className="spacer" />
         <button className="btn-sm" onClick={() => {
@@ -105,7 +106,7 @@ export function LossPage({ id, title, sub, notice }) {
       <PageTitle title={title} sub={sub} />
       {notice && <NoticeBar>{notice}</NoticeBar>}
       <div className="toolbar-row">
-        <select><option>All stores</option></select>
+        <StoreFilter />
         <select><option>COD status: any</option><option>COD only</option><option>Non-COD</option></select>
         <div className="spacer" />
         <RangeChips options={['Day', 'Week', 'Month']} active={range} onChange={setRange} />
@@ -317,6 +318,7 @@ export function StoreHealth() {
   return (
     <PagePad wide>
       <PageTitle title="Store Health" sub="Early warnings before small problems become penalties — per shop." />
+      <div className="toolbar-row"><StoreFilter /><div className="spacer" /></div>
       <StatTileRow tiles={[
         { lbl: 'Overall response rate', num: t?.responseRatePct != null ? `${t.responseRatePct}%` : '—' },
         { lbl: 'Unreplied chats', num: String(perStore.reduce((s, x) => s + x.unreplied, 0)) },

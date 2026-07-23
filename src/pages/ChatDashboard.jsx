@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../state.jsx';
 import { api } from '../api.js';
-import { PagePad, PageTitle, RangeChips } from '../components.jsx';
+import { PagePad, PageTitle, RangeChips, StoreFilter } from '../components.jsx';
 import { platformMeta } from '../data.js';
 import { PlatformLogo } from '../brand.jsx';
 
@@ -17,7 +17,7 @@ const CAT_ICONS = {
 const RANGE_DAYS = { 'Last 7 days': 7, 'Last 30 days': 30, 'Last 90 days': 90 };
 
 export default function ChatDashboard({ openPage }) {
-  const { toast } = useApp();
+  const { toast, statStores } = useApp();
 
   // jump to the conversation in the Chats tab
   function openConversation(convId) {
@@ -33,8 +33,9 @@ export default function ChatDashboard({ openPage }) {
 
   useEffect(() => {
     setData(null);
-    api(`/api/chat-insights?days=${RANGE_DAYS[range]}`).then(setData).catch(() => setData({ error: true }));
-  }, [range]);
+    const q = statStores.length ? `&stores=${statStores.join(',')}` : '';
+    api(`/api/chat-insights?days=${RANGE_DAYS[range]}${q}`).then(setData).catch(() => setData({ error: true }));
+  }, [range, statStores.join(',')]);
 
   async function generateSummary() {
     setSummarizing(true);
@@ -59,6 +60,7 @@ export default function ChatDashboard({ openPage }) {
       <PageTitle title="Chat Dashboard"
         sub="Every buyer message, sorted into what it actually is — inquiries, complaints, assistance — so you know where the day went." />
       <div className="toolbar-row">
+        <StoreFilter />
         <RangeChips options={Object.keys(RANGE_DAYS)} active={range} onChange={setRange} />
         <div className="spacer" />
         <button className="btn-sm primary" disabled={summarizing} onClick={generateSummary}>

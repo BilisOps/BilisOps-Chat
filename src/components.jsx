@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { useToast } from './state.jsx';
+import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useApp } from './state.jsx';
+import { PlatformLogo } from './brand.jsx';
 
 export function PagePad({ wide, narrow, children }) {
   const style = wide ? { maxWidth: 'none' } : narrow ? { maxWidth: narrow } : undefined;
@@ -239,6 +240,61 @@ export function NoticeBar({ info, children }) {
 export function useRangeState(initial = 'Day') {
   const [range, setRange] = useState(initial);
   return { range, setRange, mode: range.toLowerCase() };
+}
+
+// ---------- StoreFilter — multi-select store scope for every dashboard ----------
+export function StoreFilter() {
+  const { stores, statStores, setStatStores } = useApp();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, []);
+
+  const toggle = (id) => setStatStores(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const label = !statStores.length
+    ? 'All stores'
+    : statStores.length === 1
+      ? (() => { const s = stores.find(x => x.id === statStores[0]); return s ? (s.nickname || s.name) : '1 store'; })()
+      : `${statStores.length} stores`;
+
+  return (
+    <div className="storefilter" ref={ref}>
+      <button className={`btn-sm${statStores.length ? ' active' : ''}`} onClick={() => setOpen(o => !o)}>
+        <i className="ti ti-building-store" aria-hidden="true" style={{ marginRight: 5 }} />
+        {label} <span className="sf-caret">▾</span>
+      </button>
+      {open && (
+        <div className="sf-panel">
+          <div className={`sf-item${!statStores.length ? ' checked' : ''}`} onClick={() => setStatStores([])}>
+            <span className="sf-ic"><i className="ti ti-building-store" aria-hidden="true" /></span>
+            <span className="sf-name">All stores</span>
+            {!statStores.length && <span className="sf-check">✓</span>}
+          </div>
+          <div className="sf-sep" />
+          {!stores.length && <div className="sf-empty">No stores connected yet.</div>}
+          {stores.map(s => {
+            const on = statStores.includes(s.id);
+            return (
+              <div key={s.id} className={`sf-item${on ? ' checked' : ''}`} onClick={() => toggle(s.id)}>
+                <span className="sf-ic"><PlatformLogo k={s.key} size={13} title={s.platform} /></span>
+                <span className="sf-name">{s.nickname || s.name}</span>
+                {on && <span className="sf-check">✓</span>}
+              </div>
+            );
+          })}
+          {stores.length > 1 && (
+            <div className="sf-hint">Tick several stores to combine them.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- SplitCard — metric with AI / Agents / Joint handler breakdown ----------

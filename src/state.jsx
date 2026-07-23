@@ -92,9 +92,19 @@ export function AppProvider({ children, onLogout }) {
     return list;
   }, []);
 
+  // dashboard store filter — empty array = all stores; shared by every dashboard
+  const [statStores, setStatStores] = useLocal('stat_stores', []);
+  const statStoresRef = useRef(statStores);
+  statStoresRef.current = statStores;
+
   const syncStats = useCallback(async () => {
-    setStats(await api('/api/stats?days=90'));
+    const sel = statStoresRef.current;
+    const q = sel.length ? `&stores=${sel.join(',')}` : '';
+    setStats(await api(`/api/stats?days=90${q}`));
   }, []);
+
+  // re-pull stats the moment the store selection changes
+  useEffect(() => { syncStats().catch(() => {}); }, [statStores, syncStats]);
 
   const syncAll = useCallback(async () => {
     try {
@@ -123,6 +133,7 @@ export function AppProvider({ children, onLogout }) {
   const value = {
     user, onLogout, toast,
     stores, conversations, connected, unread, stats,
+    statStores, setStatStores,
     syncStores, syncConversations, syncStats, syncAll,
     plan, setPlan, addons, setAddons, settings, setSettings,
     opLog, logOp,

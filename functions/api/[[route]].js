@@ -791,9 +791,11 @@ app.get('/api/stats', async (c) => {
     sb.from('orders').select('data').eq('seller_id', seller.id),
     sb.from('stores').select('data').eq('seller_id', seller.id),
   ]);
-  const convs = (cr || []).map((r) => r.data);
-  const orders = (or || []).map((r) => r.data);
-  const stores = (sr || []).map((r) => r.data);
+  // optional multi-store filter: ?stores=id1,id2 — every metric respects it
+  const fset = new Set(String(c.req.query('stores') || '').split(',').filter(Boolean));
+  const convs = (cr || []).map((r) => r.data).filter((cv) => !fset.size || fset.has(cv.storeId));
+  const orders = (or || []).map((r) => r.data).filter((o) => !fset.size || fset.has(o.storeId));
+  const stores = (sr || []).map((r) => r.data).filter((s) => !fset.size || fset.has(s.id));
 
   const daily = []; const index = {};
   for (let i = days - 1; i >= 0; i--) {
@@ -1404,7 +1406,8 @@ app.get('/api/chat-insights', async (c) => {
   const days = Math.min(90, Math.max(1, Number(c.req.query('days')) || 30));
   const cutoff = new Date(Date.now() - days * 86400000).toISOString();
   const { data } = await sb.from('conversations').select('data').eq('seller_id', seller.id);
-  const convs = (data || []).map((r) => r.data);
+  const fset = new Set(String(c.req.query('stores') || '').split(',').filter(Boolean));
+  const convs = (data || []).map((r) => r.data).filter((cv) => !fset.size || fset.has(cv.storeId));
 
   const counts = { complaint: 0, assistance: 0, price: 0, shipping: 0, inquiry: 0, other: 0 };
   const examples = { complaint: [], assistance: [], price: [], shipping: [], inquiry: [], other: [] };
