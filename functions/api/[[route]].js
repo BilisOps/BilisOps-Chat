@@ -63,7 +63,10 @@ function eq(a, b) {
   return out === 0;
 }
 
-const publicSeller = (s) => ({ id: s.id, email: s.email, name: s.name });
+const publicSeller = (s) => ({
+  id: s.id, email: s.email, name: s.name,
+  plan: s.plan || 'Free', addons: Array.isArray(s.addons) ? s.addons : [],
+});
 const bearer = (c) => (c.req.header('authorization') || '').replace(/^Bearer\s+/i, '');
 
 // ---------- signed OAuth state (stateless CSRF token tying a flow to a seller) ----------
@@ -207,12 +210,46 @@ app.post('/api/stores', async (c) => {
   return c.json(storePub(store));
 });
 
+// Rename: sets a display nickname. The platform's real shop name is kept
+// (webhook routing, TikTok sync, and re-authorization are unaffected).
+app.put('/api/stores/:id', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const { data } = await sb.from('stores').select('data')
+    .eq('id', c.req.param('id')).eq('seller_id', seller.id).maybeSingle();
+  if (!data) return c.json({ error: 'not_found' }, 404);
+  const store = data.data;
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  if ('nickname' in body) store.nickname = String(body.nickname || '').trim().slice(0, 60) || null;
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: seller.id, data: store }));
+  return c.json(storePub(store));
+});
+
 app.delete('/api/stores/:id', async (c) => {
   const seller = c.get('seller');
   const { data } = await c.get('sb').from('stores').delete()
     .eq('id', c.req.param('id')).eq('seller_id', seller.id).select('id');
   if (!data || !data.length) return c.json({ error: 'not_found' }, 404);
   return c.json({ ok: true });
+});
+
+// ---------- Account plan & add-ons (server-side, follows the seller everywhere) ----------
+const PLAN_NAMES = new Set(['Free', 'Starter', 'Growth', 'Pro', 'Scale']);
+const ADDON_NAMES = new Set(['AI Assist', 'AI Assist Pro']);
+
+app.put('/api/account/plan', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  const { data: row } = await sb.from('sellers').select('data').eq('id', seller.id).maybeSingle();
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const fresh = row.data;
+  if ('plan' in body && PLAN_NAMES.has(body.plan)) fresh.plan = body.plan;
+  if ('addons' in body && Array.isArray(body.addons)) {
+    fresh.addons = body.addons.filter((a) => ADDON_NAMES.has(a)).slice(0, 5);
+  }
+  await w(sb.from('sellers').update({ data: fresh }).eq('id', seller.id));
+  return c.json(publicSeller(fresh));
 });
 
 // ---------- platform readiness matrix (Settings page) ----------
@@ -782,7 +819,7 @@ app.get('/api/stats', async (c) => {
       conversionPct: convs.length ? Math.round((orders.length / convs.length) * 1000) / 10 : null,
     },
     perStore: stores.map((s) => ({
-      storeId: s.id, name: s.name, platform: s.platform,
+      storeId: s.id, name: s.nickname || s.name, platform: s.platform,
       conversations: convs.filter((cv) => cv.storeId === s.id).length,
       replied: convs.filter((cv) => cv.storeId === s.id && cv.messages.some((m) => m.direction === 'out')).length,
       orders: orders.filter((o) => o.storeId === s.id).length,

@@ -113,9 +113,9 @@ export default function Chats() {
           const n = unreadFor(s.id);
           return (
             <div key={s.id} className={`store-item${storeFilter === s.id ? ' active' : ''}`}
-              title={`${s.platform} — ${s.name}`} onClick={() => setStoreFilter(s.id)}>
+              title={`${s.platform} — ${s.nickname || s.name}`} onClick={() => setStoreFilter(s.id)}>
               <span className="store-ic">{m?.icon || '🏬'}</span>
-              <span className="store-name">{s.name}</span>
+              <span className="store-name">{s.nickname || s.name}</span>
               {n > 0 && <span className="store-badge">{n}</span>}
             </div>
           );

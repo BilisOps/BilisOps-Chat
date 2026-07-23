@@ -38,9 +38,32 @@ export function AppProvider({ children, onLogout }) {
   const [conversations, setConversations] = useState([]);
   const [stats, setStats] = useState(null);
 
+  // plan & add-ons live on the seller account (server) — localStorage is just a warm cache
+  const [plan, setPlanRaw] = useLocal('plan', 'Free');
+  const [addons, setAddonsRaw] = useLocal('addons', []);
+  const setPlan = useCallback((next) => {
+    setPlanRaw(prev => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      api('/api/account/plan', { method: 'PUT', body: { plan: v } }).catch(() => {});
+      return v;
+    });
+  }, [setPlanRaw]);
+  const setAddons = useCallback((next) => {
+    setAddonsRaw(prev => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      api('/api/account/plan', { method: 'PUT', body: { addons: v } }).catch(() => {});
+      return v;
+    });
+  }, [setAddonsRaw]);
+  // pull the account's plan/add-ons on load so it follows the seller across browsers
+  useEffect(() => {
+    api('/api/me').then(me => {
+      if (me?.plan) setPlanRaw(me.plan);
+      if (Array.isArray(me?.addons)) setAddonsRaw(me.addons);
+    }).catch(() => {});
+  }, []);
+
   // local (per-browser) data
-  const [plan, setPlan] = useLocal('plan', 'Free');
-  const [addons, setAddons] = useLocal('addons', []);
   const [settings, setSettings] = useLocal('settings', null); // {currency, timezone}
   const [opLog, setOpLog] = useLocal('oplog', []);
 
@@ -51,7 +74,7 @@ export function AppProvider({ children, onLogout }) {
   const syncStores = useCallback(async () => {
     const list = await api('/api/stores');
     setStores(list.map(s => ({
-      id: s.id, platform: s.platform, key: s.key, name: s.name, site: s.site,
+      id: s.id, platform: s.platform, key: s.key, name: s.name, nickname: s.nickname || null, site: s.site,
       time: new Date(s.authorizedAt).toLocaleString(),
       expiry: new Date(s.expiresAt).toLocaleDateString(),
     })));

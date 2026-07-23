@@ -12,6 +12,7 @@ export function StoreAuth() {
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState(false);
+  const [renaming, setRenaming] = useState(null); // store being renamed
 
   // Connect flow: ask the backend for the authorize URL, then send the browser there.
   // The platform (or the demo consent page) redirects back and the store gets created.
@@ -54,12 +55,28 @@ export function StoreAuth() {
     toast(`${store.name} removed`);
   }
 
+  async function rename(store, nickname) {
+    try {
+      await api(`/api/stores/${store.id}`, { method: 'PUT', body: { nickname } });
+      await syncStores();
+      logOp(`Renamed store "${store.name}" to "${nickname || store.name}"`);
+      toast(nickname ? `Store renamed to "${nickname}"` : 'Nickname cleared — using the shop\'s real name');
+    } catch {
+      toast('Rename failed — try again');
+    }
+  }
+
   const rows = stores.map(s => (
     <tr key={s.id}>
-      <td><b>{s.name}</b></td><td>{s.platform}</td><td>{s.site}</td>
+      <td>
+        <b>{s.nickname || s.name}</b>
+        {s.nickname && <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{s.name}</div>}
+      </td>
+      <td>{s.platform}</td><td>{s.site}</td>
       <td>{s.time}</td><td>{s.expiry}</td>
       <td><StatusPill ok>Authorized</StatusPill></td>
       <td style={{ whiteSpace: 'nowrap' }}>
+        <button className="btn-sm" onClick={() => setRenaming(s)}>Rename</button>{' '}
         <button className="btn-sm" onClick={() => toast('Authorization refreshed for another year ✓')}>Reauthorize</button>{' '}
         <button className="btn-sm danger" onClick={() => remove(s)}>Remove</button>
       </td>
@@ -97,6 +114,20 @@ export function StoreAuth() {
         columns={['Store name', 'Platform', 'Site', 'Authorized at', 'Expires', 'Status', 'Actions']}
         rows={rows}
         empty='No stores connected yet. Pick a platform above and click "Connect store" to authorize through the platform.' />
+
+      {renaming && (
+        <FormDialog
+          title={`Rename "${renaming.nickname || renaming.name}"`}
+          sub="A display name for your workspace — the shop's real platform name stays untouched."
+          submitLabel="Save name"
+          fields={[{
+            key: 'nickname', label: 'Store nickname', value: renaming.nickname || '',
+            placeholder: renaming.name, hint: 'Leave blank to go back to the shop\'s real name.',
+          }]}
+          onClose={() => setRenaming(null)}
+          onSubmit={({ nickname }) => rename(renaming, nickname.trim())}
+        />
+      )}
     </PagePad>
   );
 }
