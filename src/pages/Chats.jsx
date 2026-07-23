@@ -11,8 +11,9 @@ const FILTERS = [
 ];
 
 export default function Chats() {
-  const { conversations, syncConversations, toast, user } = useApp();
+  const { conversations, syncConversations, toast, user, stores } = useApp();
   const [filter, setFilter] = useState('all');
+  const [storeFilter, setStoreFilter] = useState('all'); // 'all' | storeId
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [composer, setComposer] = useState('');
@@ -27,12 +28,16 @@ export default function Chats() {
   const selected = conversations.find(c => c.id === selectedId) || null;
 
   const filtered = conversations.filter(c => {
+    if (storeFilter !== 'all' && c.storeId !== storeFilter) return false;
     if (filter === 'unread' && !c.unread) return false;
     if (!['all', 'unread'].includes(filter) && c.platform !== filter) return false;
     const q = search.toLowerCase();
     if (q && !c.name.toLowerCase().includes(q) && !c.preview.toLowerCase().includes(q)) return false;
     return true;
   });
+
+  const unreadFor = (storeId) => conversations.filter(c =>
+    (storeId === 'all' || c.storeId === storeId) && c.unread).length;
 
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
@@ -96,6 +101,30 @@ export default function Chats() {
 
   return (
     <div className="chats-layout">
+      <aside className="store-col">
+        <div className="store-col-title">Stores</div>
+        <div className={`store-item${storeFilter === 'all' ? ' active' : ''}`} onClick={() => setStoreFilter('all')}>
+          <span className="store-ic"><i className="ti ti-building-store" aria-hidden="true" /></span>
+          <span className="store-name">All stores</span>
+          {unreadFor('all') > 0 && <span className="store-badge">{unreadFor('all')}</span>}
+        </div>
+        {stores.map(s => {
+          const m = platformMeta[s.key];
+          const n = unreadFor(s.id);
+          return (
+            <div key={s.id} className={`store-item${storeFilter === s.id ? ' active' : ''}`}
+              title={`${s.platform} — ${s.name}`} onClick={() => setStoreFilter(s.id)}>
+              <span className="store-ic">{m?.icon || '🏬'}</span>
+              <span className="store-name">{s.name}</span>
+              {n > 0 && <span className="store-badge">{n}</span>}
+            </div>
+          );
+        })}
+        {!stores.length && (
+          <div className="store-hint">Connect a store in Settings → Store Authorization to see it here.</div>
+        )}
+      </aside>
+
       <section className="conv-col">
         <div className="conv-header">
           <h2>

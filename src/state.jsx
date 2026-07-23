@@ -61,7 +61,7 @@ export function AppProvider({ children, onLogout }) {
   const syncConversations = useCallback(async () => {
     const list = await api('/api/conversations');
     setConversations(list.map(c => ({
-      id: c.id, name: c.buyerName, platform: c.platform, preview: c.preview,
+      id: c.id, name: c.buyerName, platform: c.platform, storeId: c.storeId, preview: c.preview,
       time: timeLabel(c.updatedAt), unread: c.unread, resolved: c.resolved, test: c.test,
       messages: c.messages.map(m => ({ direction: m.direction, text: m.text, time: timeLabel(m.at) })),
     })));

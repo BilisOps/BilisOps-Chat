@@ -1434,13 +1434,85 @@ a { color: inherit; }
 /* chats page fills panel */
 .chats-layout {
   display: grid;
-  grid-template-columns: 330px 1fr 290px;
+  grid-template-columns: 168px 330px 1fr 290px;
   height: 100%;
 }
 
-@media (max-width: 1200px) {
-  .chats-layout { grid-template-columns: 300px 1fr; }
+/* Per-store column — filter the inbox by shop, with unread counts */
+.store-col {
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  padding: 12px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.store-col-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 2px 8px 8px;
+}
+.store-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  transition: background 0.12s;
+}
+.store-item:hover { background: var(--panel-2); }
+.store-item.active { background: #ffedd5; color: #c2410c; }
+.store-item.active .store-ic i { color: #c2410c; }
+.store-ic {
+  width: 20px;
+  text-align: center;
+  font-size: 13px;
+  flex: none;
+}
+.store-ic i { font-size: 15px; color: var(--muted); }
+.store-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.store-badge {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.store-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 6px 8px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1300px) {
+  .chats-layout { grid-template-columns: 168px 300px 1fr; }
   .chats-layout .info-col { display: none; }
+}
+@media (max-width: 1000px) {
+  .chats-layout { grid-template-columns: 300px 1fr; }
+  .chats-layout .store-col { display: none; }
 }
 
 /* sub tabs inside pages */
