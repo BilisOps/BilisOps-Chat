@@ -14,7 +14,7 @@ import { StoreAuth, AgentsPage, Sensitive, SystemSettings, OpRecord, Privacy } f
 const PAGES = {
   home: { title: 'Home', rail: 'home', render: (p) => <Home {...p} /> },
   chats: { title: 'Chats', rail: 'chats', render: () => <Chats /> },
-  'chat-dashboard': { title: 'Chat Dashboard', rail: 'chats', render: () => <ChatDashboard /> },
+  'chat-dashboard': { title: 'Chat Dashboard', rail: 'chats', render: (p) => <ChatDashboard {...p} /> },
   tickets: { title: 'Ticket Center', rail: 'tickets', render: () => <Tickets /> },
   'ai-hub': { title: 'AI Chatbot', rail: 'ai', render: (p) => <AiHub {...p} /> },
   'ai-monitor': { title: 'AI Chatbot Monitor', rail: 'ai', render: () => <AiMonitor /> },

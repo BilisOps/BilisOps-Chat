@@ -1351,7 +1351,7 @@ app.get('/api/chat-insights', async (c) => {
       totalIn++;
       const cat = classifyMessage(m.text);
       counts[cat]++;
-      examples[cat].push({ buyerName: conv.buyerName, text: m.text.slice(0, 120), platform: conv.platform, storeId: conv.storeId, at: m.at });
+      examples[cat].push({ conversationId: conv.id, buyerName: conv.buyerName, text: m.text.slice(0, 120), platform: conv.platform, storeId: conv.storeId, at: m.at });
     }
   }
   for (const k of Object.keys(examples)) {

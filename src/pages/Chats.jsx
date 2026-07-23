@@ -33,6 +33,27 @@ export default function Chats() {
 
   const selected = conversations.find(c => c.id === selectedId) || null;
 
+  // deep-link from other pages (e.g. Chat Dashboard): open a specific conversation
+  const convsRef = useRef(conversations);
+  convsRef.current = conversations;
+  useEffect(() => {
+    const check = () => {
+      const id = sessionStorage.getItem('bilisops_open_conv');
+      if (!id) return;
+      sessionStorage.removeItem('bilisops_open_conv');
+      setStoreFilter('all');
+      setFilter('all');
+      setSelectedId(id);
+      const conv = convsRef.current.find(c => c.id === id);
+      if (conv?.unread) {
+        api(`/api/conversations/${id}/read`, { method: 'POST' }).then(syncConversations).catch(() => {});
+      }
+    };
+    check();
+    window.addEventListener('bilisops-open-conv', check);
+    return () => window.removeEventListener('bilisops-open-conv', check);
+  }, []);
+
   // the buyer's orders (current + previous) for the info panel
   useEffect(() => {
     setBuyerOrders([]);

@@ -1242,6 +1242,17 @@ a { color: inherit; }
 .cat-examples .ex-logo { flex: none; transform: translateY(1px); }
 .cat-examples .ex-buyer { font-weight: 600; color: var(--text); flex: none; }
 .cat-empty { font-size: 12px; color: var(--muted); }
+.cat-examples li.clickable {
+  cursor: pointer;
+  border-radius: 7px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  transition: background 0.12s;
+}
+.cat-examples li.clickable:hover { background: var(--panel-2); }
+.cat-examples li.clickable:hover .ex-buyer { color: var(--brand); }
+.cat-examples .ex-go { margin-left: auto; flex: none; color: var(--brand); opacity: 0; font-weight: 700; }
+.cat-examples li.clickable:hover .ex-go { opacity: 1; }
 .platform-tile .p-name { font-size: 12.5px; font-weight: 700; margin-top: 6px; }
 .platform-tile .p-state { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .platform-tile.connected { border-color: var(--good); background: rgba(31, 174, 95, 0.06); }

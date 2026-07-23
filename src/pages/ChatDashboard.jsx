@@ -16,8 +16,16 @@ const CAT_ICONS = {
 
 const RANGE_DAYS = { 'Last 7 days': 7, 'Last 30 days': 30, 'Last 90 days': 90 };
 
-export default function ChatDashboard() {
+export default function ChatDashboard({ openPage }) {
   const { toast } = useApp();
+
+  // jump to the conversation in the Chats tab
+  function openConversation(convId) {
+    if (!convId) return;
+    sessionStorage.setItem('bilisops_open_conv', convId);
+    window.dispatchEvent(new Event('bilisops-open-conv'));
+    openPage?.('chats');
+  }
   const [range, setRange] = useState('Last 30 days');
   const [data, setData] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -102,9 +110,11 @@ export default function ChatDashboard() {
                 {cat.examples.length ? (
                   <ul className="cat-examples">
                     {cat.examples.map((ex, i) => (
-                      <li key={i}>
+                      <li key={i} className="clickable" title="Open this conversation in Chats"
+                        onClick={() => openConversation(ex.conversationId)}>
                         <span className="ex-logo"><PlatformLogo k={ex.platform} size={11} /></span>
                         <span className="ex-buyer">{ex.buyerName}:</span> {ex.text}
+                        <span className="ex-go">→</span>
                       </li>
                     ))}
                   </ul>
