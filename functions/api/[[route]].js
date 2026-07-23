@@ -300,7 +300,9 @@ const UI_NAME = { shopee: 'Shopee', lazada: 'Lazada', tiktok: 'TikTok', fb: 'Fac
 function liveAuthorizeUrl(key, env, redirect, state) {
   const r = encodeURIComponent(redirect), s = encodeURIComponent(state);
   if (key === 'shopee') return `https://partner.shopeemobile.com/api/v2/shop/auth_partner?partner_id=${env.SHOPEE_PARTNER_ID}&redirect=${r}`;
-  if (key === 'lazada') return `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${r}&client_id=${env.LAZADA_APP_KEY}&state=${s}`;
+  // Lazada: go straight to the PH country endpoint — the auth.lazada.com hop
+  // drops the query string in the browser ("Missing parameter").
+  if (key === 'lazada') return `https://api.lazada.com.ph/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${r}&client_id=${env.LAZADA_APP_KEY}&state=${s}`;
   if (key === 'tiktok') {
     // TikTok Shop seller authorization uses a SERVICE ID (from Partner Center),
     // not the app_key. Prefer a full pasted URL, then service_id, then app_key.
