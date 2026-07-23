@@ -868,12 +868,27 @@ async function deliverOrderEvent(sb, store, evt) {
     };
   }
   // buyer linkage + rich detail, whenever the source provides them
-  for (const k of ['buyerName', 'buyerExternalId', 'conversationId', 'items', 'paymentMethod', 'courier', 'trackingNo']) {
+  for (const k of ['buyerName', 'buyerExternalId', 'conversationId', 'items', 'paymentMethod', 'paymentTime', 'courier', 'trackingNo']) {
     if (evt[k] != null) order[k] = evt[k];
   }
   await w(sb.from('orders').upsert({ id: order.id, seller_id: order.sellerId, data: order }));
   return order;
 }
+
+// Seller note on an order (shown in the buyer panel's order detail).
+app.put('/api/orders/:id', async (c) => {
+  const seller = c.get('seller');
+  const sb = c.get('sb');
+  const { data } = await sb.from('orders').select('data')
+    .eq('id', c.req.param('id')).eq('seller_id', seller.id).maybeSingle();
+  if (!data) return c.json({ error: 'not_found' }, 404);
+  const order = data.data;
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  if ('sellerNote' in body) order.sellerNote = String(body.sellerNote || '').slice(0, 500);
+  await w(sb.from('orders').upsert({ id: order.id, seller_id: seller.id, data: order }));
+  const { sellerId, ...pub } = order;
+  return c.json(pub);
+});
 
 // Orders belonging to one conversation's buyer (current + previous).
 app.get('/api/conversations/:id/orders', async (c) => {
@@ -937,20 +952,24 @@ app.post('/api/dev/simulate-order', async (c) => {
     // first number in the price string, e.g. "₱299 each, 3 for ₱799" → 299
     const m = String(prod.price || '').match(/(\d[\d,]*)(\.\d+)?/);
     const unit = m ? Number(m[0].replace(/,/g, '')) : (99 + Math.floor(Math.random() * 500));
-    items = [{ name: prod.name, qty, price: unit }];
+    const variation = String(prod.variants || '').split(/[;,/]/)[0].trim() || '-';
+    items = [{ name: prod.name, qty, price: unit, variation }];
     amount = Math.round(unit * qty * 100) / 100;
   } else {
     amount = Math.round((99 + Math.random() * 1900) * 100) / 100;
   }
 
+  const status = pick(TEST_STATUSES);
+  const paid = !/UNPAID|CANCEL/i.test(status);
   const order = await deliverOrderEvent(sb, store, {
     orderRef: `TEST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-    status: pick(TEST_STATUSES),
+    status,
     amount,
     at: new Date().toISOString(),
     ...(conv ? { buyerName: conv.buyerName, buyerExternalId: conv.buyerExternalId || undefined, conversationId: conv.id } : {}),
     ...(items ? { items } : {}),
     paymentMethod: pick(['Cash on Delivery', 'GCash', 'Card']),
+    ...(paid ? { paymentTime: new Date(Date.now() + (2 + Math.floor(Math.random() * 46)) * 3600000).toISOString() } : {}),
     courier: pick(['J&T Express', 'SPX Express', 'Flash Express']),
     trackingNo: `PH${Math.random().toString().slice(2, 12)}Q`,
   });

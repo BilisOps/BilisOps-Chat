@@ -25,6 +25,10 @@ export default function Chats() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [agents] = useLocal('agents', []);
   const [buyerOrders, setBuyerOrders] = useState([]);
+  const [infoTab, setInfoTab] = useState('order');
+  const [products, setProducts] = useState([]);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteOpen, setNoteOpen] = useState(false);
   const bodyRef = useRef(null);
 
   const selected = conversations.find(c => c.id === selectedId) || null;
@@ -32,9 +36,41 @@ export default function Chats() {
   // the buyer's orders (current + previous) for the info panel
   useEffect(() => {
     setBuyerOrders([]);
+    setNoteOpen(false);
     if (!selectedId) return;
-    api(`/api/conversations/${selectedId}/orders`).then(setBuyerOrders).catch(() => {});
+    api(`/api/conversations/${selectedId}/orders`).then(list => {
+      setBuyerOrders(list);
+      setNoteDraft(list[0]?.sellerNote || '');
+    }).catch(() => {});
   }, [selectedId]);
+
+  // product catalog for the Product tab
+  useEffect(() => {
+    api('/api/ai/config').then(d => setProducts((d.products || []).filter(p => p.active))).catch(() => {});
+  }, []);
+
+  async function saveNote(order) {
+    try {
+      const updated = await api(`/api/orders/${order.id}`, { method: 'PUT', body: { sellerNote: noteDraft } });
+      setBuyerOrders(prev => prev.map(o => o.id === order.id ? updated : o));
+      setNoteOpen(false);
+      toast('Seller note saved');
+    } catch {
+      toast('Could not save the note');
+    }
+  }
+
+  // "2026/07/23 14:55 (UTC+08:00)" — Manila time like the marketplaces show
+  const manila = (iso) => {
+    if (!iso) return '—';
+    const s = new Date(iso).toLocaleString('sv-SE', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return s.replace(/-/g, '/') + ' (UTC+08:00)';
+  };
+  const logisticsText = (s) => /COMPLET|DELIVER/i.test(s) ? 'Parcel has been delivered'
+    : /SHIP{1,2}ED/i.test(s) ? 'Parcel is on the way with the courier'
+    : /TO_SHIP/i.test(s) ? 'Seller is preparing the parcel'
+    : /CANCEL/i.test(s) ? 'Order was cancelled'
+    : 'Awaiting payment';
 
   const filtered = conversations.filter(c => {
     if (storeFilter !== 'all' && c.storeId !== storeFilter) return false;
@@ -286,50 +322,92 @@ export default function Chats() {
             </div>
           </div>
         </div>
-        {(() => {
-          if (!selected) return (
-            <div className="info-section"><h4>Orders</h4>
-              <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>Select a conversation.</div></div>
-          );
-          if (!buyerOrders.length) return (
-            <div className="info-section"><h4>Orders</h4>
-              <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>No orders from this buyer yet.</div></div>
-          );
+        <div className="info-tabs">
+          {[['order', 'Order'], ['product', 'Product'], ['voucher', 'Voucher'], ['ticket', 'Ticket']].map(([k, label]) => (
+            <button key={k} className={`info-tab${infoTab === k ? ' active' : ''}`} onClick={() => setInfoTab(k)}>{label}</button>
+          ))}
+        </div>
+
+        {infoTab === 'order' && (() => {
+          if (!selected) return <div className="info-section"><div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>Select a conversation.</div></div>;
+          if (!buyerOrders.length) return <div className="info-section"><div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>No orders from this buyer yet.</div></div>;
           const [cur, ...prev] = buyerOrders;
           const cls = (s) => /COMPLET|DELIVER/i.test(s) ? 'good' : /CANCEL/i.test(s) ? 'bad' : 'mid';
           return (
             <>
               <div className="info-section">
-                <h4>Current Order</h4>
-                <div className="order-card">
-                  <div className="ord-top">
-                    <span className={`ord-status ${cls(cur.status)}`}>{cur.status}</span>
-                    <span className="ord-ref" title="Click to copy"
-                      onClick={() => { navigator.clipboard?.writeText(cur.orderRef); toast('Order ref copied'); }}>
-                      {cur.orderRef}
-                    </span>
-                  </div>
-                  <div className="ord-date">{new Date(cur.at).toLocaleString()}</div>
-                  {(cur.items || []).map((it, i) => (
-                    <div className="ord-item" key={i}>
-                      <span className="ord-item-name">{it.name}</span>
-                      <span className="ord-item-qty">×{it.qty}</span>
-                      <span className="ord-item-price">₱{Number(it.price).toLocaleString()}</span>
+                <div className="ord-top">
+                  <span className={`ord-status ${cls(cur.status)}`}>{cur.status}</span>
+                </div>
+                <div className="ord-refline">
+                  <span className="ord-ref" title="Click to copy"
+                    onClick={() => { navigator.clipboard?.writeText(cur.orderRef); toast('Order number copied'); }}>
+                    {cur.orderRef} ⧉
+                  </span>
+                </div>
+                <div className="ord-date">{manila(cur.at)}</div>
+
+                <div className="order-card" style={{ marginTop: 8 }}>
+                  {(cur.items || []).length ? (cur.items || []).map((it, i) => (
+                    <div className="ord-line" key={i}>
+                      <div className="ord-line-main">
+                        <span className="ord-item-name">{it.name}</span>
+                        <span className="ord-item-price">₱{Number(it.price).toLocaleString()}</span>
+                      </div>
+                      <div className="ord-line-sub">
+                        <span>Variation: {it.variation || '-'}</span>
+                        <span>× {it.qty}</span>
+                      </div>
                     </div>
-                  ))}
-                  <div className="info-row"><span>Amount</span><b>₱{Number(cur.amount || 0).toLocaleString()}</b></div>
-                  {cur.paymentMethod && <div className="info-row"><span>Payment</span><span>{cur.paymentMethod}</span></div>}
-                  {cur.courier && <div className="info-row"><span>Courier</span><span>{cur.courier}</span></div>}
-                  {cur.trackingNo && (
-                    <div className="info-row"><span>Tracking</span>
-                      <span className="ord-ref" title="Click to copy"
-                        onClick={() => { navigator.clipboard?.writeText(cur.trackingNo); toast('Tracking number copied'); }}>
-                        {cur.trackingNo}
-                      </span>
-                    </div>
-                  )}
+                  )) : <div className="cat-empty">No line items on this order.</div>}
+                  <div className="info-row pay-row"><span>Buyer payment amount</span><b>₱{Number(cur.amount || 0).toLocaleString()} PHP</b></div>
+                  <div className="info-row"><span>Payment Method</span><span>{cur.paymentMethod || '—'}</span></div>
+                  <div className="info-row"><span>Payment Time</span><span>{cur.paymentTime ? manila(cur.paymentTime) : '—'}</span></div>
                 </div>
               </div>
+
+              <div className="info-section">
+                <h4>Note</h4>
+                {!noteOpen && !cur.sellerNote && (
+                  <button className="note-add" onClick={() => setNoteOpen(true)}>Seller Note ⓘ <span className="plus">＋</span></button>
+                )}
+                {!noteOpen && cur.sellerNote && (
+                  <div className="note-view" onClick={() => { setNoteDraft(cur.sellerNote); setNoteOpen(true); }}>
+                    📝 {cur.sellerNote}
+                  </div>
+                )}
+                {noteOpen && (
+                  <div>
+                    <textarea className="note-input" rows={3} value={noteDraft} autoFocus
+                      placeholder="e.g. Repeat buyer — include a freebie"
+                      onChange={e => setNoteDraft(e.target.value)} />
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginTop: 6 }}>
+                      <button className="btn-sm" onClick={() => setNoteOpen(false)}>Cancel</button>
+                      <button className="btn-sm primary" onClick={() => saveNote(cur)}>Save note</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="info-section">
+                <h4>Logistic Information</h4>
+                <div className="info-row"><span>Shipping Provider</span><span>{cur.courier || '—'}</span></div>
+                <div className="info-row"><span>Tracking Number</span>
+                  {cur.trackingNo
+                    ? <span className="ord-ref" title="Click to copy"
+                        onClick={() => { navigator.clipboard?.writeText(cur.trackingNo); toast('Tracking number copied'); }}>
+                        {cur.trackingNo} ⧉
+                      </span>
+                    : <span>—</span>}
+                </div>
+                <div className="info-row"><span>Logistics Status</span>
+                  <span className={`ord-logi ${cls(cur.status)}`}>
+                    {/COMPLET|DELIVER/i.test(cur.status) ? '✅ Delivered' : cur.status}
+                  </span>
+                </div>
+                <div className="info-row"><span>Latest Description</span><span>{logisticsText(cur.status)}</span></div>
+              </div>
+
               {prev.length > 0 && (
                 <div className="info-section">
                   <h4>Previous Orders ({prev.length})</h4>
@@ -345,6 +423,49 @@ export default function Chats() {
             </>
           );
         })()}
+
+        {infoTab === 'product' && (
+          <div className="info-section">
+            <h4>Product Catalog</h4>
+            {!products.length
+              ? <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>No products yet — add them in AI → Product Catalog.</div>
+              : products.map(p => (
+                <div className="prod-row" key={p.id}>
+                  <div className="prod-main">
+                    <span className="prod-name">{p.name}</span>
+                    <span className="prod-price">{p.price || '—'}</span>
+                  </div>
+                  <div className="prod-sub">
+                    <span className={`ord-status sm ${p.stock === 'in' ? 'good' : p.stock === 'out' ? 'bad' : 'mid'}`}>
+                      {p.stock === 'in' ? 'In stock' : p.stock === 'out' ? 'Out of stock' : p.stock === 'low' ? 'Low stock' : 'Pre-order'}
+                    </span>
+                    <button className="btn-sm" style={{ fontSize: 10.5 }}
+                      onClick={() => { setComposer(`Hi po! ${p.name} — ${p.price || ''}${p.promo ? ` · ${p.promo}` : ''} 😊`); toast('Product inserted into your reply'); }}>
+                      Insert to reply
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {infoTab === 'voucher' && (
+          <div className="info-section">
+            <h4>Vouchers</h4>
+            <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>
+              No vouchers yet. Platform voucher sharing arrives with the marketplace order scopes.
+            </div>
+          </div>
+        )}
+
+        {infoTab === 'ticket' && (
+          <div className="info-section">
+            <h4>Tickets</h4>
+            <div className="empty-state" style={{ padding: 0, textAlign: 'left' }}>
+              No tickets for this buyer. Escalations you file in the Ticket Center will show here.
+            </div>
+          </div>
+        )}
         <div className="info-section">
           <h4>Tags</h4>
           <div className="tag-list">
