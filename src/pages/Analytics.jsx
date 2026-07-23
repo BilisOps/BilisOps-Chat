@@ -1,57 +1,105 @@
 import React, { useState } from 'react';
 import { useApp } from '../state.jsx';
 import { downloadFile } from '../api.js';
-import { PagePad, PageTitle, SubTabs, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily } from '../components.jsx';
+import { PagePad, PageTitle, DataTable, StatTileRow, ChartCard, RangeChips, LockedPage, NoticeBar, aggregateDaily } from '../components.jsx';
+import { PlatformLogo } from '../brand.jsx';
 
 const fmt = v => (v === null || v === undefined ? '—' : v);
 
-// ---------- Sales Conversion ----------
+// ---------- Sales Conversion (funnel + AI/Agents/Joint split cards) ----------
+const HANDLERS = [
+  ['ai', '🤖 AI'],
+  ['human', '👤 Agents'],
+  ['joint', '🤝 Joint'],
+];
+
+function SplitCard({ title, total, get, suffix = '' }) {
+  return (
+    <div className="split-card">
+      <div className="sc-title">{title}</div>
+      <div className="sc-val">{total}</div>
+      <div className="sc-rows">
+        {HANDLERS.map(([k, label]) => (
+          <div className="sc-row" key={k}>
+            <span className={`sc-h ${k}`}>{label}</span>
+            <span className="sc-n">{get(k)}{suffix && get(k) !== '—' ? suffix : ''}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SalesConv() {
   const { toast, settings, stats } = useApp();
   const [range, setRange] = useState('Day');
-  const [tab, setTab] = useState('Pre-Sales Conversion');
   const cur = settings?.currency || 'PHP';
   const t = stats?.totals;
+  const hs = stats?.handlerSplit;
+  const g = (grp, field) => hs?.[grp]?.[field];
+  const num = (v) => (v === null || v === undefined ? '—' : v);
 
   const agg = aggregateDaily(stats?.daily, range.toLowerCase(), ['inquiries', 'orders']);
-  const replies = stats?.daily?.reduce((s, d) => s + d.replies, 0) ?? 0;
+  const guideBuyersTotal = hs ? ['ai', 'human', 'joint'].reduce((s, k) => s + (hs[k].guideBuyers || 0), 0) : 0;
 
   return (
     <PagePad wide>
-      <PageTitle title="Sales Conversion" sub="From first question to paid order — where buyers convert and where they drop." />
+      <PageTitle title="Sales Conversion" sub="From first question to paid order — and who did the guiding: your AI, your agents, or both." />
       <div className="toolbar-row">
-        <select><option>All stores</option></select>
-        <input type="text" value="Last 90 days" readOnly style={{ width: 120 }} />
-        <div className="spacer" />
         <RangeChips options={['Day', 'Week', 'Month']} active={range} onChange={setRange} />
+        <div className="spacer" />
         <button className="btn-sm" onClick={() => {
           downloadFile('bilisops-sales-conversion.csv',
-            `Metric,Combined\nBuyer inquiries,${t?.conversations ?? 0}\nOrders guided,${t?.orders ?? 0}\nOrder conversion rate,${t?.conversionPct ?? 0}%\nAmount guided to payment (${cur}),${t?.amount ?? 0}\n`,
+            `Metric,Total,AI,Agents,Joint\nSessions,${t?.replied ?? 0},${g('ai','sessions') ?? 0},${g('human','sessions') ?? 0},${g('joint','sessions') ?? 0}\nOrders,${t?.orders ?? 0},${g('ai','orders') ?? 0},${g('human','orders') ?? 0},${g('joint','orders') ?? 0}\nAmount (${cur}),${t?.amount ?? 0},${g('ai','amount') ?? 0},${g('human','amount') ?? 0},${g('joint','amount') ?? 0}\n`,
             'text/csv');
           toast('Report exported as CSV');
         }}>Export</button>
       </div>
-      <SubTabs tabs={['Pre-Sales Conversion', 'Overall Conversion']} active={tab} onChange={setTab} />
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 16 }}>
-        {[
-          ['Orders guided', fmt(t?.orders), 'ti-shopping-cart'],
-          ['Order conversion rate', t?.conversionPct != null ? `${t.conversionPct}%` : '—', 'ti-trending-up'],
-          [`Guided sales (${cur})`, t?.amount != null ? t.amount.toLocaleString() : '—', 'ti-coin'],
-        ].map(([title, val, icon]) => (
-          <div key={title} className="kpi">
-            <div className="kpi-top">
-              <span className="kpi-lbl">{title}</span>
-              <i className={`ti ${icon}`} aria-hidden="true" />
-            </div>
-            <div className="kpi-val">{val}</div>
-            <div className="kpi-split">
-              <span className="k-ai">AI 0</span>
-              <span>·</span>
-              <span className="k-agents">Agents {val}</span>
-            </div>
+
+      <div className="funnel-wrap">
+        <div className="funnel">
+          <div className="fn-stage s1">
+            <div className="fn-lbl">Buyer inquiries</div>
+            <div className="fn-num">{fmt(t?.conversations)}</div>
           </div>
-        ))}
+          <div className="fn-stage s2">
+            <div className="fn-lbl">Reception sessions</div>
+            <div className="fn-num">{fmt(t?.replied)}</div>
+          </div>
+          <div className="fn-stage s3">
+            <div className="fn-lbl">Orders guided</div>
+            <div className="fn-num">{fmt(t?.orders)}</div>
+          </div>
+          <div className="fn-rate r1">
+            <span>Response rate</span>
+            <b>{t?.responseRatePct != null ? `${t.responseRatePct}%` : '--'}</b>
+          </div>
+          <div className="fn-rate r2">
+            <span>Order conversion</span>
+            <b>{t?.conversionPct != null ? `${t.conversionPct}%` : '--'}</b>
+          </div>
+        </div>
+
+        <div className="split-grid">
+          <SplitCard title="Buyer inquiries" total={fmt(t?.conversations)}
+            get={k => num(g(k, 'sessions'))} />
+          <SplitCard title="Reception sessions" total={fmt(t?.replied)}
+            get={k => num(g(k, 'sessions'))} />
+          <SplitCard title="Response rate" total={t?.responseRatePct != null ? `${t.responseRatePct}%` : '—'}
+            get={k => (t?.replied ? Math.round(((g(k, 'sessions') || 0) / t.replied) * 100) : '—')} suffix="%" />
+          <SplitCard title="Avg. first response (min)" total={fmt(t?.avgFirstResponseMin)}
+            get={k => num(g(k, 'avgFirstResponseMin'))} />
+          <SplitCard title="Guide buyers" total={guideBuyersTotal}
+            get={k => num(g(k, 'guideBuyers'))} />
+          <SplitCard title="Guide orders" total={fmt(t?.orders)}
+            get={k => num(g(k, 'orders'))} />
+          <SplitCard title="Order conversion rate" total={t?.conversionPct != null ? `${t.conversionPct}%` : '—'}
+            get={k => num(g(k, 'conversionPct'))} suffix="%" />
+          <SplitCard title={`Amount guided (${cur})`} total={t?.amount != null ? t.amount.toLocaleString() : '—'}
+            get={k => (g(k, 'amount') != null ? g(k, 'amount').toLocaleString() : '—')} />
+        </div>
       </div>
+
       <ChartCard
         legend={[
           { label: 'Buyer inquiries', color: '#f97316' },
@@ -64,15 +112,6 @@ export function SalesConv() {
         ] : null}
         mode={range.toLowerCase()}
       />
-      <h3 style={{ margin: '22px 0 12px', fontSize: 15 }}>Conversation activity</h3>
-      <StatTileRow tiles={[
-        { lbl: 'Buyer inquiries', num: String(t?.conversations ?? 0) },
-        { lbl: 'Conversations replied', num: String(t?.replied ?? 0) },
-        { lbl: 'Response rate', num: t?.responseRatePct != null ? `${t.responseRatePct}%` : '—' },
-        { lbl: 'Orders', num: String(t?.orders ?? 0) },
-        { lbl: 'Order sales', num: `${(t?.amount ?? 0).toLocaleString()} ${cur}` },
-        { lbl: 'Replies sent', num: String(replies) },
-      ]} />
     </PagePad>
   );
 }
@@ -141,14 +180,60 @@ export function ReviewAnalysis({ openPage }) {
   }
   return (
     <PagePad wide>
-      <PageTitle title="Review Analysis" sub="AI-attributed reasons behind every neutral and negative review." />
-      <StatTileRow tiles={[
-        { lbl: 'Neutral & negative reviews', num: '0' },
-        { lbl: 'Reasons identified', num: '0' },
-        { lbl: 'Orders involved', num: '0' },
-        { lbl: 'Products involved', num: '0' },
-      ]} />
-      <ChartCard legend={[{ label: 'Negative review trend', color: '#ff5a1f' }]} mode="day" />
+      <PageTitle title="Review Analysis" sub="Reviews, reminders that earn them, and recoveries that save them." />
+      <div className="rv-grid">
+        <div className="rv-card">
+          <div className="rv-head">
+            <span className="rv-link" onClick={() => openPage('chats')}>Go to review management ›</span>
+          </div>
+          <div className="rv-empty">
+            <div className="rv-empty-ic">📮</div>
+            <div>No data</div>
+            <div className="rv-empty-sub">Reviews sync once the marketplace review scopes are approved.</div>
+          </div>
+        </div>
+
+        <div className="rv-card">
+          <div className="rv-head">
+            <span className="rv-link" onClick={() => openPage('followup')}>Go to configure review reminders ›</span>
+          </div>
+          <div className="rv-funnel">
+            <div className="fn-stage s1 sm">
+              <div className="fn-lbl">Positive review reminders sent</div>
+              <div className="fn-num">--</div>
+            </div>
+            <div className="fn-stage s3 sm">
+              <div className="fn-lbl">Successful positive reviews</div>
+              <div className="fn-num">--</div>
+            </div>
+            <div className="rv-rate">
+              <span>Reminder success rate</span>
+              <b>--</b>
+            </div>
+          </div>
+        </div>
+
+        <div className="rv-card">
+          <div className="rv-head">
+            <span className="rv-link" onClick={() => openPage('followup')}>Go to configure review care ›</span>
+          </div>
+          <div className="rv-funnel">
+            <div className="fn-stage s1 sm">
+              <div className="fn-lbl">Negative review recoveries sent</div>
+              <div className="fn-num">--</div>
+            </div>
+            <div className="fn-stage s3 sm">
+              <div className="fn-lbl">Successful recoveries</div>
+              <div className="fn-num">--</div>
+            </div>
+            <div className="rv-rate">
+              <span>Recovery rate</span>
+              <b>--</b>
+            </div>
+          </div>
+        </div>
+      </div>
+      <NoticeBar info>💡 Review reminders and recovery flows live in Marketing → Order Follow-Up. Their funnels fill in as soon as review data flows from the platforms.</NoticeBar>
     </PagePad>
   );
 }
@@ -218,21 +303,55 @@ function StorePerfTable() {
   );
 }
 
-// ---------- Store Health ----------
+// ---------- Store Health (per store) ----------
 export function StoreHealth() {
-  const { conversations, stats } = useApp();
-  const unreplied = conversations.filter(c => c.unread).length;
+  const { stats } = useApp();
   const t = stats?.totals;
+  const perStore = stats?.perStore || [];
+
+  const healthOf = (s) => {
+    if (!s.conversations) return { label: 'No traffic', cls: 'mid' };
+    if ((s.responseRatePct ?? 100) >= 90 && s.unreplied === 0) return { label: '✅ Good', cls: 'good' };
+    return { label: '⚠️ Needs attention', cls: 'bad' };
+  };
+
+  const rows = perStore.map(s => {
+    const h = healthOf(s);
+    return (
+      <tr key={s.storeId}>
+        <td>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+            <PlatformLogo k={s.key} size={13} title={s.platform} />
+            <b>{s.name}</b>
+          </span>
+        </td>
+        <td>
+          <span className={`ord-status sm ${(s.responseRatePct ?? 100) >= 90 ? 'good' : 'bad'}`}>
+            {s.responseRatePct != null ? `${s.responseRatePct}%` : '—'}
+          </span>
+        </td>
+        <td>{s.unreplied}</td>
+        <td>{s.avgFirstResponseMin != null ? `${s.avgFirstResponseMin} min` : '—'}</td>
+        <td>{s.cancelled}{s.orders ? ` / ${s.orders}` : ''}</td>
+        <td><span className={`ord-status ${h.cls}`}>{h.label}</span></td>
+      </tr>
+    );
+  });
+
   return (
-    <PagePad>
-      <PageTitle title="Store Health" sub="Early warnings before small problems become penalties." />
+    <PagePad wide>
+      <PageTitle title="Store Health" sub="Early warnings before small problems become penalties — per shop." />
       <StatTileRow tiles={[
-        { lbl: 'Response rate', num: t?.responseRatePct != null ? `${t.responseRatePct}%` : '—' },
-        { lbl: 'Unreplied chats', num: String(unreplied) },
+        { lbl: 'Overall response rate', num: t?.responseRatePct != null ? `${t.responseRatePct}%` : '—' },
+        { lbl: 'Unreplied chats', num: String(perStore.reduce((s, x) => s + x.unreplied, 0)) },
         { lbl: 'Avg. first response', num: t?.avgFirstResponseMin != null ? `${t.avgFirstResponseMin} min` : '—' },
         { lbl: 'Cancelled orders', num: String(t?.cancelled ?? 0) },
       ]} />
-      <NoticeBar info>💡 Marketplaces reward fast responders with better search ranking. Keep response rate above 90% to stay in their good graces.</NoticeBar>
+      <DataTable
+        columns={['Store', 'Response rate', 'Unreplied', 'Avg. first response', 'Cancelled / orders', 'Health']}
+        rows={rows.length ? rows : null}
+        empty="No stores connected yet — connect one in Settings → Store Authorization." />
+      <NoticeBar info>💡 Marketplaces reward fast responders with better search ranking. Keep every shop's response rate above 90% to stay in their good graces.</NoticeBar>
     </PagePad>
   );
 }

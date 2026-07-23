@@ -826,13 +826,66 @@ app.get('/api/stats', async (c) => {
       cancelledAmount: Math.round(cancelled.reduce((s, o) => s + (o.amount || 0), 0) * 100) / 100,
       conversionPct: convs.length ? Math.round((orders.length / convs.length) * 1000) / 10 : null,
     },
-    perStore: stores.map((s) => ({
-      storeId: s.id, name: s.nickname || s.name, platform: s.platform,
-      conversations: convs.filter((cv) => cv.storeId === s.id).length,
-      replied: convs.filter((cv) => cv.storeId === s.id && cv.messages.some((m) => m.direction === 'out')).length,
-      orders: orders.filter((o) => o.storeId === s.id).length,
-      amount: Math.round(orders.filter((o) => o.storeId === s.id).reduce((sm, o) => sm + (o.amount || 0), 0) * 100) / 100,
-    })),
+    perStore: stores.map((s) => {
+      const sc = convs.filter((cv) => cv.storeId === s.id);
+      const so = orders.filter((o) => o.storeId === s.id);
+      const replied = sc.filter((cv) => cv.messages.some((m) => m.direction === 'out'));
+      const mins = [];
+      sc.forEach((cv) => {
+        const fIn = cv.messages.find((m) => m.direction === 'in');
+        const fOut = fIn && cv.messages.find((m) => m.direction === 'out' && m.at >= fIn.at);
+        if (fIn && fOut) mins.push((new Date(fOut.at) - new Date(fIn.at)) / 60000);
+      });
+      return {
+        storeId: s.id, name: s.nickname || s.name, platform: s.platform, key: s.key,
+        conversations: sc.length,
+        replied: replied.length,
+        unreplied: sc.length - replied.length,
+        responseRatePct: sc.length ? Math.round((replied.length / sc.length) * 100) : null,
+        avgFirstResponseMin: mins.length ? Math.round((mins.reduce((a, b) => a + b, 0) / mins.length) * 10) / 10 : null,
+        orders: so.length,
+        cancelled: so.filter((o) => isCancelled(o.status)).length,
+        amount: Math.round(so.reduce((sm, o) => sm + (o.amount || 0), 0) * 100) / 100,
+      };
+    }),
+    // who handled each replied conversation: AI only / agents only / joint
+    handlerSplit: (() => {
+      const groupOf = (cv) => {
+        const outs = cv.messages.filter((m) => m.direction === 'out');
+        if (!outs.length) return null;
+        const aiN = outs.filter((m) => m.ai).length;
+        return aiN === outs.length ? 'ai' : aiN === 0 ? 'human' : 'joint';
+      };
+      const mk = () => ({ sessions: 0, guideBuyers: 0, orders: 0, amount: 0, firstMins: [] });
+      const g = { ai: mk(), human: mk(), joint: mk() };
+      const convGroup = {};
+      convs.forEach((cv) => {
+        const grp = groupOf(cv);
+        if (!grp) return;
+        convGroup[cv.id] = grp;
+        g[grp].sessions++;
+        const fIn = cv.messages.find((m) => m.direction === 'in');
+        const fOut = fIn && cv.messages.find((m) => m.direction === 'out' && m.at >= fIn.at);
+        if (fIn && fOut) g[grp].firstMins.push((new Date(fOut.at) - new Date(fIn.at)) / 60000);
+      });
+      const buyersWithOrder = { ai: new Set(), human: new Set(), joint: new Set() };
+      orders.forEach((o) => {
+        const grp = o.conversationId && convGroup[o.conversationId];
+        if (!grp) return;
+        g[grp].orders++;
+        g[grp].amount += o.amount || 0;
+        buyersWithOrder[grp].add(o.conversationId);
+      });
+      for (const k of ['ai', 'human', 'joint']) {
+        g[k].guideBuyers = buyersWithOrder[k].size;
+        g[k].avgFirstResponseMin = g[k].firstMins.length
+          ? Math.round((g[k].firstMins.reduce((a, b) => a + b, 0) / g[k].firstMins.length) * 10) / 10 : null;
+        g[k].amount = Math.round(g[k].amount * 100) / 100;
+        g[k].conversionPct = g[k].sessions ? Math.round((g[k].orders / g[k].sessions) * 1000) / 10 : null;
+        delete g[k].firstMins;
+      }
+      return g;
+    })(),
   });
 });
 
