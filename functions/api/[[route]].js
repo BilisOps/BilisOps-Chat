@@ -344,6 +344,9 @@ app.get('/api/connect/:key/start', async (c) => {
   const url = live
     ? liveAuthorizeUrl(key, c.env, redirect, state)
     : `${origin}/api/platforms/${key}/oauth/mock?state=${encodeURIComponent(state)}${reShop}${reName}`;
+  // Cookie backup of the state — some platforms (Lazada PH) drop the state
+  // param on the redirect back; the callback falls back to this cookie.
+  c.header('Set-Cookie', `bo_oauth_state=${encodeURIComponent(state)}; Max-Age=900; Path=/api/platforms; Secure; HttpOnly; SameSite=Lax`);
   return c.json({ url, mode: live ? 'live' : 'demo', platform: UI_NAME[key] || meta.name });
 });
 
@@ -422,8 +425,17 @@ app.get('/api/platforms/:key/oauth/callback', async (c) => {
     `<div class="b">⚡</div><h2>Couldn't connect</h2><p>${msg}</p><p style="margin-top:10px"><a href="/">Return to BilisOps Chat</a></p>`), 400);
   if (!meta) return fail('Unknown platform.');
   const q = c.req.query();
-  const payload = await verifyState(c.env.SUPABASE_SERVICE_KEY, q.state);
+  // Lazada PH drops the state param on the redirect back — fall back to the
+  // signed state cookie set when the Connect flow started.
+  let stateStr = q.state;
+  if (!stateStr) {
+    const m = (c.req.header('cookie') || '').match(/(?:^|;\s*)bo_oauth_state=([^;]+)/);
+    if (m) stateStr = decodeURIComponent(m[1]);
+  }
+  const payload = await verifyState(c.env.SUPABASE_SERVICE_KEY, stateStr);
   if (!payload || payload.key !== key) return fail('This authorization link expired. Go back and click Connect again.');
+  // one-time use: clear the cookie
+  c.header('Set-Cookie', 'bo_oauth_state=; Max-Age=0; Path=/api/platforms; Secure; HttpOnly; SameSite=Lax');
 
   const sellerId = payload.sid;
   const sb = sbFrom(c);
