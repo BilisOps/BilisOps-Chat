@@ -607,22 +607,121 @@ async function ttSyncChats(env, sb, store) {
 }
 
 // Throttled: at most one pull per store per minute, piggybacked on inbox reads.
-async function maybeSyncTikTok(c, sb, sellerId) {
-  if (!c.env.TIKTOK_APP_KEY || !c.env.TIKTOK_APP_SECRET) return;
+async function maybeSyncChats(c, sb, sellerId) {
+  const canTikTok = c.env.TIKTOK_APP_KEY && c.env.TIKTOK_APP_SECRET;
+  const canLazada = c.env.LAZADA_APP_KEY && c.env.LAZADA_APP_SECRET;
+  if (!canTikTok && !canLazada) return;
   const { data } = await sb.from('stores').select('data').eq('seller_id', sellerId);
   for (const r of data || []) {
     const store = r.data;
-    if (store.key !== 'tiktok' || !store.tokens || !store.tokens.access_token) continue;
+    if (!store.tokens || !store.tokens.access_token) continue;
+    const syncer = store.key === 'tiktok' && canTikTok ? ttSyncChats
+      : store.key === 'lazada' && canLazada ? lzSyncChats : null;
+    if (!syncer) continue;
     const last = store.lastChatSyncAt ? Date.parse(store.lastChatSyncAt) : 0;
     if (Date.now() - last < 60 * 1000) continue;
     try {
-      await ttSyncChats(c.env, sb, store);
+      await syncer(c.env, sb, store);
     } catch (e) {
       store.lastChatSyncAt = new Date().toISOString();
       store.lastChatSyncError = String(e && e.message || e).slice(0, 300);
       await sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store });
     }
   }
+}
+const maybeSyncTikTok = maybeSyncChats; // back-compat alias for existing call sites
+
+// ---------- Lazada chat PULL sync (signed REST API) ----------
+// Same shape as the TikTok sync: sessions → conversations, messages deduped by
+// id, throttled to once a minute, errors recorded on the store for diagnostics.
+const LZ_BASE = 'https://api.lazada.com.ph/rest';
+
+async function lzFetch(env, store, path, extra = {}) {
+  const params = {
+    app_key: env.LAZADA_APP_KEY,
+    timestamp: String(Date.now()),
+    sign_method: 'sha256',
+    access_token: store.tokens.access_token,
+    ...extra,
+  };
+  const base = path + Object.keys(params).sort().map((k) => k + params[k]).join('');
+  params.sign = (await hmacHex(env.LAZADA_APP_SECRET, base)).toUpperCase();
+  const qs = new URLSearchParams(params).toString();
+  return fetch(`${LZ_BASE}${path}?${qs}`).then((r) => r.json()).catch((e) => ({ code: 'FETCH', message: String(e && e.message || e) }));
+}
+
+function lzText(m) {
+  let t = '';
+  try { const j = JSON.parse(m.content || '{}'); t = j.txt || j.text || j.content || ''; }
+  catch { t = String(m.content || ''); }
+  if (!t && m.template_id && String(m.template_id) !== '1') t = '[attachment]';
+  return t;
+}
+
+async function lzSyncChats(env, sb, store) {
+  const sess = await lzFetch(env, store, '/im/session/list', { page_size: '10', last_session_id: '', last_update_time: '' });
+  if (sess?.code && sess.code !== '0') throw new Error(sess.message || `session list failed (${sess.code})`);
+  const list = sess?.data?.session_list || sess?.data?.sessions || [];
+
+  const { data: rows } = await sb.from('conversations').select('data').eq('seller_id', store.sellerId);
+  const existing = (rows || []).map((r) => r.data);
+
+  for (const s of list) {
+    const sid = String(s.session_id || s.sessionId || '');
+    if (!sid) continue;
+    const msgRes = await lzFetch(env, store, '/im/message/list', { session_id: sid, page_size: '10', start_time: '' });
+    if (msgRes?.code && msgRes.code !== '0') continue;
+    const msgs = msgRes?.data?.message_list || msgRes?.data?.messages || [];
+
+    let conv = existing.find((x) => x.storeId === store.id && x.buyerExternalId === sid);
+    if (!conv) {
+      conv = {
+        id: id('cnv'), sellerId: store.sellerId, storeId: store.id, platform: store.key,
+        buyerName: s.title || s.buyer_nick || 'Lazada Buyer', buyerExternalId: sid,
+        preview: '', unread: false, resolved: false, test: false,
+        updatedAt: new Date().toISOString(), messages: [],
+      };
+      existing.push(conv);
+    }
+    if (s.title) conv.buyerName = s.title;
+    const seen = new Set(conv.messages.map((m) => m.extId).filter(Boolean));
+    const incoming = msgs
+      .map((m) => ({
+        extId: String(m.message_id || m.messageId || ''),
+        direction: Number(m.from_account_type) === 1 ? 'in' : 'out',
+        text: lzText(m),
+        at: m.send_time ? new Date(Number(m.send_time)).toISOString() : new Date().toISOString(),
+      }))
+      .filter((m) => m.text && m.extId && !seen.has(m.extId));
+    let added = 0;
+    if (incoming.length) {
+      conv.messages = conv.messages.concat(incoming).sort((a, b) => (a.at < b.at ? -1 : 1));
+      added = incoming.length;
+    }
+    if (conv.messages.length) {
+      const last = conv.messages[conv.messages.length - 1];
+      conv.preview = last.text;
+      conv.updatedAt = last.at;
+      if (added && last.direction === 'in') conv.unread = true;
+    }
+    await w(sb.from('conversations').upsert({ id: conv.id, seller_id: conv.sellerId, updated_at: conv.updatedAt, data: conv }));
+    const lastMsg = conv.messages[conv.messages.length - 1];
+    if (added && lastMsg && lastMsg.direction === 'in') {
+      await autoReplyIfEnabled(env, sb, store.sellerId, conv);
+    }
+  }
+
+  store.lastChatSyncAt = new Date().toISOString();
+  store.lastChatSyncError = null;
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store }));
+}
+
+// Seller reply → Lazada buyer (used by the reply endpoint and auto-reply).
+async function lzSendMessage(env, store, conv, text) {
+  const res = await lzFetch(env, store, '/im/message/send', {
+    session_id: conv.buyerExternalId, template_id: '1', txt: text,
+  });
+  if (res?.code && res.code !== '0') throw new Error(res.message || `send failed (${res.code})`);
 }
 
 // ---------- Platform webhooks: normalize every marketplace into ONE model ----------
@@ -1111,12 +1210,16 @@ app.post('/api/conversations/:id/reply', async (c) => {
 
   // Best-effort outbound: push the reply to the real platform when connected.
   let delivered = null;
-  if (conv.platform === 'tiktok' && c.env.TIKTOK_APP_KEY && c.env.TIKTOK_APP_SECRET) {
+  const outboundReady =
+    (conv.platform === 'tiktok' && c.env.TIKTOK_APP_KEY && c.env.TIKTOK_APP_SECRET) ||
+    (conv.platform === 'lazada' && c.env.LAZADA_APP_KEY && c.env.LAZADA_APP_SECRET);
+  if (outboundReady) {
     const { data: sr } = await sb.from('stores').select('data').eq('id', conv.storeId).maybeSingle();
     const store = sr && sr.data;
     if (store && store.tokens && store.tokens.access_token && !conv.test) {
       try {
-        await ttSendMessage(c.env, sb, store, conv, text);
+        if (conv.platform === 'tiktok') await ttSendMessage(c.env, sb, store, conv, text);
+        else await lzSendMessage(c.env, store, conv, text);
         delivered = true;
         conv.lastSendError = null;
       } catch (e) {
@@ -1403,11 +1506,17 @@ async function autoReplyIfEnabled(env, sb, sellerId, conv) {
     conv.unread = false; // answered by the AI
     await w(sb.from('conversations').upsert({ id: conv.id, seller_id: conv.sellerId, updated_at: now, data: conv }));
     // deliver outbound for real platform conversations
-    if (conv.platform === 'tiktok' && !conv.test && env.TIKTOK_APP_KEY && env.TIKTOK_APP_SECRET) {
+    const canOut =
+      (conv.platform === 'tiktok' && env.TIKTOK_APP_KEY && env.TIKTOK_APP_SECRET) ||
+      (conv.platform === 'lazada' && env.LAZADA_APP_KEY && env.LAZADA_APP_SECRET);
+    if (canOut && !conv.test) {
       const { data: st } = await sb.from('stores').select('data').eq('id', conv.storeId).maybeSingle();
       const store = st && st.data;
       if (store && store.tokens && store.tokens.access_token) {
-        await ttSendMessage(env, sb, store, conv, res.draft).catch((e) => {
+        const send = conv.platform === 'tiktok'
+          ? ttSendMessage(env, sb, store, conv, res.draft)
+          : lzSendMessage(env, store, conv, res.draft);
+        await send.catch((e) => {
           conv.lastSendError = String(e && e.message || e).slice(0, 300);
           return sb.from('conversations').update({ data: conv }).eq('id', conv.id);
         });
