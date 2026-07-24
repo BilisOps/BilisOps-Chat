@@ -619,13 +619,28 @@ async function maybeSyncChats(c, sb, sellerId) {
       : store.key === 'lazada' && canLazada ? lzSyncChats : null;
     if (!syncer) continue;
     const last = store.lastChatSyncAt ? Date.parse(store.lastChatSyncAt) : 0;
-    if (Date.now() - last < 60 * 1000) continue;
-    try {
-      await syncer(c.env, sb, store);
-    } catch (e) {
-      store.lastChatSyncAt = new Date().toISOString();
-      store.lastChatSyncError = String(e && e.message || e).slice(0, 300);
-      await sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store });
+    if (Date.now() - last >= 60 * 1000) {
+      try {
+        await syncer(c.env, sb, store);
+      } catch (e) {
+        store.lastChatSyncAt = new Date().toISOString();
+        store.lastChatSyncError = String(e && e.message || e).slice(0, 300);
+        await sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store });
+      }
+    }
+    // Lazada orders sync runs on its own throttle — the Order API group is
+    // active even while the chat group is still pending publication.
+    if (store.key === 'lazada' && canLazada) {
+      const lastO = store.lastOrderSyncAt ? Date.parse(store.lastOrderSyncAt) : 0;
+      if (Date.now() - lastO >= 60 * 1000) {
+        try {
+          await lzSyncOrders(c.env, sb, store);
+        } catch (e) {
+          store.lastOrderSyncAt = new Date().toISOString();
+          store.lastOrderSyncError = String(e && e.message || e).slice(0, 300);
+          await sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store });
+        }
+      }
     }
   }
 }
@@ -714,6 +729,34 @@ async function lzSyncChats(env, sb, store) {
   store.lastChatSyncAt = new Date().toISOString();
   store.lastChatSyncError = null;
   await w(sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store }));
+}
+
+// Lazada ORDER sync — the Order Information API group is active even while the
+// chat (IM) group waits on marketplace publication, so orders flow today.
+async function lzSyncOrders(env, sb, store) {
+  const since = store.lastOrderSyncAt
+    ? new Date(Date.parse(store.lastOrderSyncAt) - 10 * 60 * 1000)   // 10-min overlap window
+    : new Date(Date.now() - 30 * 86400000);                          // first pull: 30 days back
+  const iso = since.toISOString().replace(/\.\d{3}Z$/, '+00:00');
+  const res = await lzFetch(env, store, '/orders/get', {
+    update_after: iso, limit: '50', offset: '0', sort_by: 'updated_at', sort_direction: 'DESC',
+  });
+  if (res?.code && res.code !== '0') throw new Error(res.message || `orders failed (${res.code})`);
+  const list = res?.data?.orders || [];
+  for (const o of list) {
+    await deliverOrderEvent(sb, store, {
+      orderRef: String(o.order_number || o.order_id),
+      status: String((o.statuses && o.statuses[0]) || 'UNKNOWN').toUpperCase(),
+      amount: o.price != null ? Number(o.price) : null,
+      at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
+      buyerName: [o.customer_first_name, o.customer_last_name].filter(Boolean).join(' ') || undefined,
+      paymentMethod: o.payment_method || undefined,
+    });
+  }
+  store.lastOrderSyncAt = new Date().toISOString();
+  store.lastOrderSyncError = null;
+  await w(sb.from('stores').upsert({ id: store.id, seller_id: store.sellerId, data: store }));
+  return list.length;
 }
 
 // Seller reply → Lazada buyer (used by the reply endpoint and auto-reply).
